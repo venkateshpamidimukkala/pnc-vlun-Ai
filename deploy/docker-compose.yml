@@ -1,0 +1,25 @@
+services:
+  api:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    environment:
+      APP_ENV: demo
+      DATABASE_URL: postgresql+psycopg://postgres:admin@postgres:5432/pnc_vuln_ai
+      ENABLE_EXTERNAL_INTEGRATIONS: "${ENABLE_EXTERNAL_INTEGRATIONS:-false}"
+      JIRA_BASE_URL: https://pncilab-team.atlassian.net
+      JIRA_EMAIL: "${JIRA_EMAIL:-}"
+      JIRA_API_TOKEN: "${JIRA_API_TOKEN:-}"
+      JIRA_PROJECT_KEY: KAN
+    ports: ["8000:8000"]
+    depends_on: [postgres]
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: pnc_vuln_ai
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+volumes:
+  pgdata:

@@ -1,0 +1,54 @@
+
+> pnc-vuln-ai-ui@0.1.0 start
+> ng serve --host 0.0.0.0 --port 4200
+
+> Building...
+√ Building...
+Initial chunk files | Names                     |  Raw size | Estimated transfer size
+chunk-DIxzElCg.js   | -                         | 170.55 kB |                49.90 kB
+main-ZENUNNBD.js    | main                      | 119.63 kB |                31.11 kB
+styles-AWOE4I6Z.css | styles                    |  12.57 kB |                 1.80 kB
+
+                    | Initial total             | 302.75 kB |                82.80 kB
+
+Lazy chunk files    | Names                     |  Raw size | Estimated transfer size
+chunk-C2V8dugw.js   | -                         |  40.91 kB |                 9.07 kB
+chunk-QYlW0d_T.js   | remediation-component     |   6.82 kB |                 2.35 kB
+chunk-ChPMwLfZ.js   | vulnerabilities-component |   5.64 kB |                 2.06 kB
+chunk-PWtSijBH.js   | copilot-component         |   5.02 kB |                 1.85 kB
+chunk-BYNjYois.js   | login-component           |   4.80 kB |                 1.76 kB
+chunk-DNBzx_wn.js   | dashboard-component       |   4.71 kB |                 1.70 kB
+chunk-Ch2QePVR.js   | register-component        |   3.50 kB |                 1.35 kB
+chunk-DwDSyNjM.js   | enterprise-component      |   3.32 kB |                 1.26 kB
+chunk-COVCWu-z.js   | approvals-component       |   3.26 kB |                 1.32 kB
+chunk-BjIg9syh.js   | -                         | 762 bytes |               762 bytes
+
+Application bundle generation complete. [7.155 seconds] - 2026-09-17T10:45:16.054Z
+
+Watch mode enabled. Watching for file changes...
+NOTE: Raw file sizes do not reflect development server per-request transformations.
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m4200[22m/[39m
+  [32m➜[39m  [1mNetwork[22m: [36mhttp://10.15.0.54:[1m4200[22m/[39m
+> Changes detected. Rebuilding...
+√ Changes detected. Rebuilding...
+Initial chunk files | Names                     |  Raw size | Estimated transfer size
+chunk-DIxzElCg.js   | -                         | 170.55 kB |                49.90 kB
+main-ZENUNNBD.js    | main                      | 119.63 kB |                31.11 kB
+styles-AWOE4I6Z.css | styles                    |  12.57 kB |                 1.80 kB
+
+                    | Initial total             | 302.75 kB |                82.80 kB
+
+Lazy chunk files    | Names                     |  Raw size | Estimated transfer size
+chunk-C2V8dugw.js   | -                         |  40.91 kB |                 9.07 kB
+chunk-QYlW0d_T.js   | remediation-component     |   6.82 kB |                 2.35 kB
+chunk-ChPMwLfZ.js   | vulnerabilities-component |   5.64 kB |                 2.06 kB
+chunk-PWtSijBH.js   | copilot-component         |   5.02 kB |                 1.85 kB
+chunk-BYNjYois.js   | login-component           |   4.80 kB |                 1.76 kB
+chunk-DNBzx_wn.js   | dashboard-component       |   4.71 kB |                 1.70 kB
+chunk-Ch2QePVR.js   | register-component        |   3.50 kB |                 1.35 kB
+chunk-DwDSyNjM.js   | enterprise-component      |   3.32 kB |                 1.26 kB
+chunk-COVCWu-z.js   | approvals-component       |   3.26 kB |                 1.32 kB
+chunk-BjIg9syh.js   | -                         | 762 bytes |               762 bytes
+
+Application bundle generation complete. [0.612 seconds] - 2026-09-17T10:45:16.980Z
+

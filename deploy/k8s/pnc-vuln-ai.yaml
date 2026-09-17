@@ -1,0 +1,90 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pnc-vuln-ai
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: pnc-vuln-ai-api, namespace: pnc-vuln-ai}
+spec: {minAvailable: 2, selector: {matchLabels: {app: pnc-vuln-ai-api}}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: pnc-vuln-ai-config, namespace: pnc-vuln-ai}
+data:
+  APP_ENV: production
+  ENVIRONMENT_NAME: production
+  ENABLE_EXTERNAL_INTEGRATIONS: "true"
+  JIRA_BASE_URL: https://pncilab-team.atlassian.net
+  JIRA_PROJECT_KEY: KAN
+---
+apiVersion: v1
+kind: Secret
+metadata: {name: pnc-vuln-ai-secrets, namespace: pnc-vuln-ai}
+type: Opaque
+stringData:
+  DATABASE_URL: replace-in-secret-manager
+  OIDC_ISSUER: replace-in-secret-manager
+  OIDC_AUDIENCE: replace-in-secret-manager
+  JIRA_EMAIL: replace-in-secret-manager
+  JIRA_API_TOKEN: replace-in-secret-manager
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pnc-vuln-ai-api
+  namespace: pnc-vuln-ai
+spec:
+  replicas: 3
+  strategy: {type: RollingUpdate}
+  selector: {matchLabels: {app: pnc-vuln-ai-api}}
+  template:
+    metadata: {labels: {app: pnc-vuln-ai-api}}
+    spec:
+      serviceAccountName: pnc-vuln-ai-api
+      containers:
+        - name: api
+          image: ghcr.io/pnc/pnc-vuln-ai-api:0.1.0
+          ports: [{containerPort: 8000}]
+          readinessProbe: {httpGet: {path: /health, port: 8000}, periodSeconds: 10}
+          livenessProbe: {httpGet: {path: /health, port: 8000}, periodSeconds: 20}
+          securityContext: {runAsNonRoot: true, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true}
+          envFrom: [{configMapRef: {name: pnc-vuln-ai-config}}, {secretRef: {name: pnc-vuln-ai-secrets}}]
+          resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: 1, memory: 1Gi}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: pnc-vuln-ai-worker, namespace: pnc-vuln-ai}
+spec:
+  replicas: 3
+  selector: {matchLabels: {app: pnc-vuln-ai-worker}}
+  template:
+    metadata: {labels: {app: pnc-vuln-ai-worker}}
+    spec:
+      containers:
+        - name: worker
+          image: ghcr.io/pnc/pnc-vuln-ai-api:0.1.0
+          command: ["celery", "-A", "app.worker", "worker", "--loglevel=INFO"]
+          envFrom: [{configMapRef: {name: pnc-vuln-ai-config}}, {secretRef: {name: pnc-vuln-ai-secrets}}]
+          securityContext: {runAsNonRoot: true, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true}
+          resources: {requests: {cpu: 250m, memory: 512Mi}, limits: {cpu: 2, memory: 2Gi}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: pnc-vuln-ai-api, namespace: pnc-vuln-ai}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: pnc-vuln-ai-api, namespace: pnc-vuln-ai}
+spec:
+  selector: {app: pnc-vuln-ai-api}
+  ports: [{port: 80, targetPort: 8000}]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: {name: pnc-vuln-ai-api, namespace: pnc-vuln-ai}
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: pnc-vuln-ai-api}
+  minReplicas: 3
+  maxReplicas: 20
+  metrics: [{type: Resource, resource: {name: cpu, target: {type: Utilization, averageUtilization: 70}}}]

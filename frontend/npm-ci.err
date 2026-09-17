@@ -1,0 +1,6 @@
+npm error code ENOTEMPTY
+npm error syscall rmdir
+npm error path C:\Users\GCCHackVM\hackthon\PNCAgent\PNCAI\frontend\node_modules\neo-async
+npm error errno -4051
+npm error ENOTEMPTY: directory not empty, rmdir 'C:\Users\GCCHackVM\hackthon\PNCAgent\PNCAI\frontend\node_modules\neo-async'
+npm error A complete log of this run can be found in: C:\Users\GCCHackVM\AppData\Local\npm-cache\_logs\2026-09-17T10_28_19_501Z-debug-0.log

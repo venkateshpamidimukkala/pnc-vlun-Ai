@@ -1,0 +1,22 @@
+openapi: 3.1.0
+info:
+  title: PNC Vuln AI Platform API
+  version: 0.1.0
+paths:
+  /health:
+    get:
+      operationId: health
+      responses: {'200': {description: Healthy}}
+  /api/v1/vulnerabilities:
+    get:
+      operationId: listVulnerabilities
+      parameters:
+        - {name: tenant_id, in: query, required: true, schema: {type: string, format: uuid}}
+        - {name: mnemonic, in: query, schema: {type: string}}
+        - {name: repository, in: query, schema: {type: string}}
+        - {name: severity, in: query, schema: {type: string, enum: [CRITICAL,HIGH,MEDIUM,LOW]}}
+      responses: {'200': {description: Vulnerability inventory}}
+  /api/v1/remediation/bulk:
+    post:
+      operationId: requestBulkRemediation
+      responses: {'202': {description: Queued}, '400': {description: Invalid scope}}

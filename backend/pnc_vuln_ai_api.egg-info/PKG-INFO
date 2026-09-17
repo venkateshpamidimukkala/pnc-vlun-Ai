@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: pnc-vuln-ai-api
+Version: 0.1.0
+Requires-Python: >=3.13
+Requires-Dist: fastapi==0.115.12
+Requires-Dist: uvicorn[standard]==0.34.0
+Requires-Dist: pydantic==2.11.3
+Requires-Dist: pydantic-settings==2.9.1
+Requires-Dist: sqlalchemy==2.0.40
+Requires-Dist: psycopg[binary]==3.2.6
