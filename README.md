@@ -24,6 +24,12 @@ The Docker demo uses PostgreSQL with username `postgres`, password `admin`, and 
 
 For the live demo, run `start-app.bat`. It starts the Angular UI at `http://localhost:4200` and the API at `http://localhost:8000` with `APP_ENV=local`, `DEMO_DATA_ENABLED=true`, and external integrations disabled. It seeds PME, PRE, and PST findings and supports scan import, filtering, remediation workflow creation, approvals, audit events, and grounded Copilot responses. Use `reviewer@pnc.local` / `Reviewer@123` to exercise approvals, or `analyst@pnc.local` / `Analyst@123` for analyst workflows.
 
+## AI Engine foundation
+
+The local demo now includes a provider-neutral AI Engine workflow at `POST /api/v1/engine/workflows`. It orchestrates deterministic classification, remediation planning, validation, test planning, Git/PR planning, approval routing, and knowledge evidence. The Angular **Scan code base** screen starts this workflow and displays its evidence. `GET /api/v1/engine/agents` exposes the replaceable agent catalog, and workflow status is tenant-scoped.
+
+The credential-free demo intentionally does not read arbitrary local paths, modify repositories, create Jira tickets, open or merge pull requests, or call Azure OpenAI. Those actions belong behind the existing credentialed integration ports and must be enabled only after secret-manager configuration, provider-specific adapters, policy review, and external rollout validation. The workflow API is therefore an auditable orchestration contract, not a claim that those side effects are active locally.
+
 ## Production principles
 
 Identity is delegated to Azure AD/OIDC; services validate JWTs and enforce tenant-aware RBAC. Secrets come from a managed secret store, not environment files. All mutations emit audit events. Deployments use immutable images, database migrations, progressive delivery, and automated rollback gates.

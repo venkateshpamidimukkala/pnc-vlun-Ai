@@ -1,0 +1,60 @@
+import { Component, OnInit, inject } from '@angular/core';
+import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ApiService, DashboardMetrics, EngineWorkflow, Vulnerability } from '../core/api.service';
+
+type OperationsPage = {
+  eyebrow: string;
+  title: string;
+  description: string;
+  badge: string;
+  kind: 'dashboard' | 'list' | 'pipeline' | 'history';
+};
+
+@Component({
+  standalone: true,
+  imports: [RouterLink],
+  template: `<div class="page">
+    <div class="page-header"><div><p class="eyebrow">{{page.eyebrow}}</p><h1>{{page.title}}</h1><p class="subtitle">{{page.description}}</p></div><span class="badge badge-neutral">{{page.badge}}</span></div>
+    @if (page.kind === 'dashboard') {<section class="metric-grid">@for (card of cards; track card.label) {<article class="metric-card"><span class="metric-label">{{card.label}}</span><strong class="metric-value">{{card.value}}</strong><span class="metric-note">{{card.note}}</span></article>}</section>}
+    @if (page.kind === 'pipeline') {<section class="panel"><div class="panel-title"><h2>AI remediation engine</h2><span class="badge badge-success">{{engineStatus}}</span></div><div class="pipeline">@for (stage of stages; track stage.name) {<article class="stage"><span class="stage-number">{{stage.number}}</span><div><h3>{{stage.name}}</h3><p>{{stage.description}}</p><span class="badge" [class.badge-success]="stage.status === 'READY'" [class.badge-medium]="stage.status !== 'READY'">{{stage.status}}</span></div></article>}</div></section>}
+    @if (page.kind === 'list') {<section class="panel"><div class="panel-title"><h2>{{page.title}} inventory</h2><button class="btn btn-secondary" (click)="load()">↻ Refresh</button></div>@if (!rows.length) {<div class="empty-state"><strong>No records available</strong><p>Records will appear here as the security workflow processes repositories.</p></div>} @else {<div class="table-wrap"><table class="data-table"><thead><tr><th>Name</th><th>Scope</th><th>Status</th><th>Details</th></tr></thead><tbody>@for (row of rows; track row.id) {<tr><td><strong>{{row.name}}</strong></td><td>{{row.scope}}</td><td><span class="badge badge-success">{{row.status}}</span></td><td>{{row.details}}</td></tr>}</tbody></table></div>}</section>}
+    @if (page.kind === 'history') {<section class="panel"><div class="panel-title"><h2>Recent activity</h2><span class="badge badge-neutral">Auditable</span></div>@if (!history.length) {<div class="empty-state">No activity has been recorded yet.</div>} @else {<ul class="list-reset">@for (item of history; track item.id) {<li class="list-row"><div><strong>{{item.title}}</strong><small class="muted">{{item.detail}}</small></div><span class="badge badge-neutral">{{item.status}}</span></li>}</ul>}</section>}
+    @if (page.kind === 'dashboard') {<div class="two-column"><section class="panel"><div class="panel-title"><h2>Workflow coverage</h2><span class="badge badge-success">Governed</span></div><p class="subtitle">Classification, remediation, validation, and approval evidence are retained for every engine workflow.</p><div class="progress"><span [style.width.%]="workflowCoverage"></span></div><p class="metric-note">{{workflows.length}} workflow(s) tracked</p></section><section class="panel"><div class="panel-title"><h2>Quick actions</h2></div><a class="btn btn-primary" routerLink="/execute">Scan code base</a> <a class="btn btn-ghost" routerLink="/remediation">Review remediation</a></section></div>}
+  </div>`,
+  styles: [`.pipeline{display:grid;grid-template-columns:repeat(5,1fr);gap:.75rem}.stage{padding:1rem;background:#f8fafc;border:1px solid var(--line);border-radius:9px}.stage-number{display:grid;place-items:center;width:28px;height:28px;margin-bottom:.75rem;color:#fff;background:var(--orange);border-radius:50%;font-weight:700}.stage h3{margin-bottom:.4rem;font-size:.88rem}.stage p{min-height:54px;color:var(--muted);font-size:.75rem;line-height:1.45}.metric-note{display:block}.table-wrap{overflow:auto}.quick-actions{display:flex;gap:.5rem}@media(max-width:900px){.pipeline{grid-template-columns:repeat(2,1fr)}}@media(max-width:600px){.pipeline{grid-template-columns:1fr}}`]
+})
+export class OperationsComponent implements OnInit {
+  private readonly api = inject(ApiService);
+  private readonly route = inject(ActivatedRoute);
+  page: OperationsPage = this.definition('executive');
+  metrics: DashboardMetrics | null = null;
+  vulnerabilities: Vulnerability[] = [];
+  workflows: EngineWorkflow[] = [];
+  rows: { id: string; name: string; scope: string; status: string; details: string }[] = [];
+  history: { id: string; title: string; detail: string; status: string }[] = [];
+  engineStatus = 'READY';
+  stages = [
+    { number: 1, name: 'Classification', description: 'Rank severity, CWE, business impact, and confidence.', status: 'READY' },
+    { number: 2, name: 'Remediation', description: 'Generate a plan and preview the secure change.', status: 'READY' },
+    { number: 3, name: 'Validation', description: 'Gate builds, unit, security, and regression tests.', status: 'READY' },
+    { number: 4, name: 'Approval', description: 'Require security and application-owner review.', status: 'READY' },
+    { number: 5, name: 'Knowledge', description: 'Retain evidence for future investigation.', status: 'READY' },
+  ];
+
+  ngOnInit(): void { this.route.url.subscribe(() => { this.page = this.definition(this.route.snapshot.url.at(-1)?.path || 'executive'); this.load(); }); }
+  get cards(): { label: string; value: string; note: string }[] { const m = this.metrics; return [{label:'Open findings',value:String(m?.open ?? 0),note:'Tenant inventory'}, {label:'Critical risk',value:String(m?.critical ?? 0),note:'Priority review'}, {label:'Remediated',value:String(m?.remediated ?? 0),note:'Change completed'}, {label:'AI success rate',value:`${m?.ai_success_rate_percent ?? 0}%`,note:'Validated workflows'}]; }
+  get workflowCoverage(): number { return this.workflows.length ? 100 : 0; }
+  load(): void {
+    this.rows = [];
+    if (this.page.kind === 'dashboard' || this.page.kind === 'pipeline') this.api.metrics().subscribe({ next: value => this.metrics = value });
+    if (this.page.kind === 'pipeline' || this.page.kind === 'history' || this.page.title === 'Pull requests') this.api.engineWorkflows().subscribe({ next: value => { this.workflows = value; const records = value.map(item => ({id:item.workflow_id,name:`${item.project} pull request`,scope:item.repository_path,status:item.status,details:`${item.finding_ids.length} finding(s) · governed workflow`})); if (this.page.title === 'Pull requests') this.rows = records; else this.history = value.map(item => ({id:item.workflow_id,title:`${item.project} workflow`,detail:`${item.status} · ${item.repository_path}`,status:item.status})); } });
+    if (this.page.title === 'Audit log') this.api.auditEvents().subscribe({ next: value => this.history = value.map(item => ({id:item.aggregate_id,title:item.event_type,detail:`Aggregate ${item.aggregate_id} · ${item.occurred_at}`,status:'RECORDED'})) });
+    if (this.page.title === 'Applications') this.api.applications().subscribe({ next: value => this.rows = value.map(item => ({id:item.id,name:item.name,scope:item.repo_path,status:'SCANNED',details:`${item.technology_stack.join(', ')} · ${item.total_vulnerabilities} findings · ${item.critical_issues} critical`})) });
+    if (this.page.title === 'Remediations') this.api.remediations().subscribe({ next: value => this.rows = value.map(item => ({id:item.id,name:`Finding ${item.finding_id.slice(0, 8)}`,scope:item.cwe || 'Security remediation',status:item.status,details:`${item.confidence} confidence · ${item.explanation}`})) });
+    if (this.page.title === 'Jira tickets') this.api.jiraTickets().subscribe({ next: value => this.rows = value.map(item => ({id:item.id,name:item.ticket_number || 'Local ticket',scope:item.application || 'Security finding',status:item.status,details:item.summary || ''})) });
+    if (this.page.title === 'Pull requests') this.api.pullRequests().subscribe({ next: value => this.rows = value.map(item => ({id:item.id,name:item.pr_number || 'Local PR',scope:item.branch_name || '',status:item.status,details:`${item.files_changed?.length || 0} file(s) · ${item.title || ''}`})) });
+    if (this.page.title === 'Knowledge repository') this.api.knowledge().subscribe({ next: value => this.rows = value.map(item => ({id:item.id,name:item.vulnerability_pattern || 'Remediation pattern',scope:item.cwe || 'CWE pending',status:'PUBLISHED',details:item.description || ''})) });
+    if (this.page.title === 'Vulnerabilities') this.api.vulnerabilities().subscribe({ next: value => this.rows = value.map(item => ({id:item.id,name:item.title,scope:`${item.application} · ${item.file_name || 'inventory'}`,status:item.status,details:`Risk ${item.risk_score ?? item.cvss ?? '—'}`})) });
+  }
+  private definition(key: string): OperationsPage { const pages: Record<string, OperationsPage> = { executive:{eyebrow:'Dashboard',title:'Executive dashboard',description:'Business-level visibility into risk, remediation progress, and governed security change.',badge:'Leadership view',kind:'dashboard'}, security:{eyebrow:'Dashboard',title:'Security dashboard',description:'Security posture, active gates, and unresolved risk across the tenant.',badge:'Security operations',kind:'dashboard'}, developer:{eyebrow:'Dashboard',title:'Developer dashboard',description:'Developer-focused remediation queues, validation status, and secure change guidance.',badge:'Developer view',kind:'pipeline'}, applications:{eyebrow:'Management',title:'Applications',description:'Application inventory and repository coverage for security operations.',badge:'Inventory',kind:'list'}, remediation:{eyebrow:'Management',title:'Remediations',description:'AI-generated fixes with before-and-after evidence and confidence metadata.',badge:'AI recommendations',kind:'list'}, jira:{eyebrow:'Management',title:'Jira tickets',description:'Local ticket records for MVP planning and external Jira handoff.',badge:'Placeholder integration',kind:'list'}, 'pull-requests':{eyebrow:'Management',title:'Pull requests',description:'Review security changes and their approval readiness before merge.',badge:'Change control',kind:'list'}, 'test-case-validation':{eyebrow:'Management',title:'Test case validation',description:'Track the required build, unit, security, and regression checks for remediation.',badge:'Quality gate',kind:'pipeline'}, 'security-gateway':{eyebrow:'Security',title:'Security gateway',description:'A policy gate that prevents unvalidated or unapproved security changes from progressing.',badge:'Protected',kind:'pipeline'}, 'audit-log':{eyebrow:'Security',title:'Audit log',description:'Tenant-scoped evidence of scans, classifications, approvals, and remediation actions.',badge:'Immutable evidence',kind:'history'}, 'pr-history':{eyebrow:'History',title:'PR history',description:'Historical record of security pull-request workflows and outcomes.',badge:'Historical view',kind:'history'}, 'knowledge-repo':{eyebrow:'History',title:'Knowledge repository',description:'Reusable security knowledge built from validated findings, fixes, and workflow evidence.',badge:'AI knowledge',kind:'list'} }; return pages[key] || pages['executive']; }
+}

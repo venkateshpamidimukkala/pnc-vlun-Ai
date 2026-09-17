@@ -8,6 +8,8 @@ from app.persistence import engine
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_FILE = PROJECT_ROOT / "database" / "001_initial_schema.sql"
 SEED_FILE = PROJECT_ROOT / "database" / "002_demo_seed.sql"
+ENTERPRISE_FILE = PROJECT_ROOT / "database" / "003_enterprise_capabilities.sql"
+MVP_FILE = PROJECT_ROOT / "database" / "004_mvp_read_models.sql"
 
 
 def initialize_demo_database() -> None:
@@ -19,6 +21,8 @@ def initialize_demo_database() -> None:
             ).scalar_one()
             if not schema_exists:
                 connection.exec_driver_sql(SCHEMA_FILE.read_text(encoding="utf-8"))
+            connection.exec_driver_sql(ENTERPRISE_FILE.read_text(encoding="utf-8"))
+            connection.exec_driver_sql(MVP_FILE.read_text(encoding="utf-8"))
             connection.exec_driver_sql(SEED_FILE.read_text(encoding="utf-8"))
     except Exception as exc:
         raise RuntimeError(

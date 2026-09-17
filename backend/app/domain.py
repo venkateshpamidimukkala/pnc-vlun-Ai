@@ -48,6 +48,12 @@ class Vulnerability(BaseModel):
     status: FindingStatus = FindingStatus.OPEN
     ai_confidence: Confidence = Confidence.MEDIUM
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    file_name: str | None = None
+    line_number: int | None = Field(default=None, ge=1)
+    description: str | None = None
+    business_impact: str | None = None
+    technical_impact: str | None = None
+    risk_score: float | None = Field(default=None, ge=0, le=10)
 
 
 class BulkRemediationRequest(BaseModel):
@@ -91,6 +97,12 @@ class DashboardMetrics(BaseModel):
     remediated: int
     risk_reduction_percent: float
     ai_success_rate_percent: float
+    applications_scanned: int = 0
+    remediations_generated: int = 0
+    jira_tickets_created: int = 0
+    pull_requests_generated: int = 0
+    branches_created: int = 0
+    security_score: float = 0
 
 
 class ApprovalItem(BaseModel):
