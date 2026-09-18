@@ -41,6 +41,12 @@ import { AuthService } from './core/auth.service';
         <a routerLink="/remediation" routerLinkActive="active" title="Remediation"><span class="material-icons">build</span><span>Remediation</span></a>
         <a routerLink="/pull-requests" routerLinkActive="active" title="Pull Requests"><span class="material-icons">merge</span><span>Pull Requests</span></a>
         <a routerLink="/test-case-validation" routerLinkActive="active" title="Test Case Validation"><span class="material-icons">fact_check</span><span>Test Case Validation</span></a>
+         @if (auth.hasPermission('USER_ADMINISTRATION')) {
+           <p class="nav-label">Administration</p>
+           <a routerLink="/administration/users" routerLinkActive="active" title="User Administration"><span class="material-icons">manage_accounts</span><span>User Administration</span></a>
+         }
+         <p class="nav-label">Profile</p>
+         <a routerLink="/profile" routerLinkActive="active" title="Profile"><span class="material-icons">person</span><span>Profile</span></a>
         </div>
       </nav>
       <main><router-outlet /></main>
@@ -51,7 +57,7 @@ import { AuthService } from './core/auth.service';
   styleUrl: './app.component.scss'
 })
 export class AppComponent {
-  private readonly auth = inject(AuthService);
+  readonly auth = inject(AuthService);
   collapsed = false;
   get initials(): string { return (this.auth.user()?.name || 'User').split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase(); }
   constructor(private readonly router: Router) {}

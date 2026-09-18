@@ -1,11 +1,52 @@
 import { Component, OnInit, inject } from '@angular/core';
-import { DashboardMetrics, ApiService } from '../core/api.service';
+import { Router } from '@angular/router';
+import { DashboardMetrics, ApiService, EngineWorkflow } from '../core/api.service';
 
-@Component({ standalone: true, template: `<div class="page"><div class="page-header"><div><p class="eyebrow">Executive overview</p><h1>Security operations dashboard</h1><p class="subtitle">A tenant-scoped view of risk, remediation progress, and governed change activity.</p></div><button class="btn btn-secondary" (click)="load()">↻ Refresh data</button></div>@if (loading) {<div class="panel empty-state">Loading operational metrics…</div>} @else if (error) {<div class="panel empty-state">Metrics are temporarily unavailable. <button class="btn btn-ghost" (click)="load()">Try again</button></div>} @else {<section class="metric-grid">@for (metric of metricCards; track metric.label) {<article class="metric-card"><span class="metric-label">{{metric.label}}</span><strong class="metric-value">{{metric.value}}</strong><span class="metric-note">{{metric.note}}</span></article>}</section><div class="two-column"><section class="panel"><div class="panel-title"><h2>Risk posture</h2><span class="badge badge-neutral">Live inventory</span></div><div class="risk-row"><span>Critical</span><div class="progress"><span [style.width.%]="criticalPercent"></span></div><strong>{{metrics?.critical ?? 0}}</strong></div><div class="risk-row"><span>High</span><div class="progress"><span [style.width.%]="highPercent"></span></div><strong>{{metrics?.high ?? 0}}</strong></div><div class="risk-row"><span>Medium</span><div class="progress"><span [style.width.%]="mediumPercent"></span></div><strong>{{metrics?.medium ?? 0}}</strong></div><div class="risk-row"><span>Low</span><div class="progress"><span [style.width.%]="lowPercent"></span></div><strong>{{metrics?.low ?? 0}}</strong></div></section><section class="panel"><div class="panel-title"><h2>Remediation health</h2><span class="badge badge-success">Governed</span></div><p class="subtitle">AI-assisted remediation is gated by validation, security review, and change approval.</p><div class="health-score">{{metrics?.risk_reduction_percent ?? 0}}<small>% risk reduction</small></div><p class="subtitle">{{metrics?.remediated ?? 0}} findings remediated from the current tenant inventory.</p></section></div>}` , styles: [`.risk-row{display:grid;grid-template-columns:70px 1fr 55px;gap:.75rem;align-items:center;margin:1.1rem 0}.risk-row span,.risk-row strong{font-size:.78rem}.risk-row strong{text-align:right}.health-score{margin:1.5rem 0 .35rem;color:var(--orange);font-size:2.8rem;font-weight:700}.health-score small{display:block;color:var(--muted);font-size:.78rem;font-weight:500}`] })
+@Component({
+  standalone: true,
+  template: `
+    <div class="page security-dashboard">
+      <div class="page-header">
+        <div>
+          <p class="eyebrow">Dashboard</p>
+          <h1>Security dashboard</h1>
+          <p class="subtitle">Security posture, active gates, and unresolved risk across the tenant.</p>
+        </div>
+        <button class="btn btn-secondary" (click)="load()" [disabled]="loading">{{ loading ? 'Refreshing…' : 'Refresh dashboard' }}</button>
+      </div>
+      @if (loading) {
+        <section class="panel empty-state">Loading security dashboard…</section>
+      } @else if (error) {
+        <section class="panel empty-state">Security dashboard data is temporarily unavailable. <button class="btn btn-ghost" (click)="load()">Try again</button></section>
+      } @else {
+        <section class="metric-grid">
+          <article class="metric-card"><span class="metric-label">Security posture</span><strong class="metric-value">{{ metrics?.security_score ?? 0 }}</strong><span class="metric-note">Current security score</span></article>
+          <article class="metric-card"><span class="metric-label">Active gates</span><strong class="metric-value">{{ activeGates }}</strong><span class="metric-note">Governed checks in progress</span></article>
+          <article class="metric-card"><span class="metric-label">Unresolved risk</span><strong class="metric-value">{{ metrics?.open ?? 0 }}</strong><span class="metric-note">Findings requiring action</span></article>
+          <article class="metric-card"><span class="metric-label">Critical risk</span><strong class="metric-value">{{ metrics?.critical ?? 0 }}</strong><span class="metric-note">Priority review</span></article>
+        </section>
+        <section class="panel workflow-panel">
+          <div class="panel-title"><div><h2>Security operations</h2><p class="subtitle">Classification, remediation, validation, and approval evidence are retained for every engine workflow.</p></div><span class="badge badge-success">Governed</span></div>
+          <div class="workflow-summary"><strong>{{ workflows.length }} workflow(s) tracked</strong><span>{{ workflowStatus }}</span></div>
+          @if (workflows.length) { <ul class="list-reset workflow-list">@for (workflow of workflows; track workflow.workflow_id) {<li class="list-row"><span><strong>{{ workflow.project }}</strong><small>{{ workflow.repository_path }}</small></span><span class="badge" [class.badge-success]="workflow.status === 'READY'" [class.badge-neutral]="workflow.status !== 'READY'">{{ workflow.status }}</span></li>}</ul> }
+        </section>
+        <section class="panel quick-actions"><div class="panel-title"><h2>Quick actions</h2></div><div class="action-row"><button class="btn btn-primary" (click)="goTo('execute')">Scan code base</button><button class="btn btn-secondary" (click)="goTo('remediation')">Review remediation</button></div></section>
+      }
+    </div>
+  `,
+  styles: [`.workflow-panel{margin-bottom:1rem}.workflow-summary{display:flex;justify-content:space-between;gap:1rem;padding:1rem;background:#f8fafc;border:1px solid var(--line);border-radius:9px}.workflow-summary span,.workflow-list small{color:var(--muted);font-size:.75rem}.workflow-list{margin-top:.75rem}.workflow-list .list-row>span:first-child{display:flex;flex-direction:column;gap:.25rem}.quick-actions{margin-top:1rem}.action-row{display:flex;flex-wrap:wrap;gap:.7rem}@media(max-width:600px){.workflow-summary{align-items:flex-start;flex-direction:column}.action-row .btn{width:100%}}`]
+})
 export class DashboardComponent implements OnInit {
-  private readonly api = inject(ApiService); metrics: DashboardMetrics | null = null; loading = false; error = false;
-  get metricCards(): { label: string; value: string; note: string }[] { const m = this.metrics; return [{label:'Applications scanned',value:String(m?.applications_scanned ?? 0),note:'Repository coverage'}, {label:'Open vulnerabilities',value:String(m?.open ?? 0),note:'Requires action'}, {label:'Critical vulnerabilities',value:String(m?.critical ?? 0),note:'Priority review'}, {label:'Remediations generated',value:String(m?.remediations_generated ?? 0),note:'AI-assisted'}, {label:'Jira tickets',value:String(m?.jira_tickets_created ?? 0),note:'Local MVP records'}, {label:'Pull requests',value:String(m?.pull_requests_generated ?? 0),note:'Change control'}, {label:'Branches created',value:String(m?.branches_created ?? 0),note:'Local Git'}, {label:'Security score',value:`${m?.security_score ?? 0}`,note:'Risk posture'}]; }
-  get criticalPercent(): number { return this.percent(this.metrics?.critical); } get highPercent(): number { return this.percent(this.metrics?.high); } get mediumPercent(): number { return this.percent(this.metrics?.medium); } get lowPercent(): number { return this.percent(this.metrics?.low); }
-  ngOnInit(): void { this.load(); } load(): void { this.loading = true; this.error = false; this.api.metrics().subscribe({next: value => { this.metrics = value; this.loading = false; }, error: () => { this.error = true; this.loading = false; }}); }
-  private percent(value: number | undefined): number { const total = this.metrics?.total ?? 0; return total ? Math.max(4, Math.round((value ?? 0) / total * 100)) : 0; }
+  private readonly api = inject(ApiService);
+  private readonly router = inject(Router);
+  metrics: DashboardMetrics | null = null;
+  workflows: EngineWorkflow[] = [];
+  loading = false;
+  error = false;
+  get activeGates(): number { return this.workflows.filter(workflow => workflow.status !== 'COMPLETED').length; }
+  get workflowStatus(): string { return this.workflows.length ? 'Evidence retained for every tracked workflow' : 'No active engine workflows'; }
+  ngOnInit(): void { this.load(); }
+  load(): void { this.loading = true; this.error = false; this.api.metrics().subscribe({ next: value => { this.metrics = value; this.loadWorkflows(); }, error: () => { this.loading = false; this.error = true; } }); }
+  goTo(path: string): void { void this.router.navigate([path]); }
+  private loadWorkflows(): void { this.api.engineWorkflows().subscribe({ next: value => { this.workflows = value; this.loading = false; }, error: () => { this.workflows = []; this.loading = false; } }); }
 }

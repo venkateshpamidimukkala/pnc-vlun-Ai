@@ -11,6 +11,12 @@ DEMO_USERS = {
     "admin@pnc.local": {"password": "Admin@123", "user_id": UUID("00000000-0000-0000-0000-000000000003"), "role": "PLATFORM_ADMIN", "name": "Demo Platform Administrator"},
 }
 
+ROLE_PERMISSIONS = {
+    "SECURITY_ANALYST": ["DASHBOARD_VIEW", "SCAN_EXECUTE", "VULNERABILITY_VIEW", "PROFILE_MANAGE"],
+    "SECURITY_REVIEWER": ["DASHBOARD_VIEW", "SCAN_EXECUTE", "VULNERABILITY_VIEW", "VULNERABILITY_REMEDIATE", "APPROVAL_REVIEW", "PROFILE_MANAGE"],
+    "PLATFORM_ADMIN": ["DASHBOARD_VIEW", "SCAN_EXECUTE", "VULNERABILITY_VIEW", "VULNERABILITY_REMEDIATE", "APPROVAL_REVIEW", "USER_ADMINISTRATION", "PROFILE_MANAGE"],
+}
+
 
 class LoginRequest(BaseModel):
     email: str = Field(min_length=5)
@@ -30,13 +36,23 @@ class AuthResponse(BaseModel):
     name: str
     email: str
     role: str
+    permissions: list[str] = Field(default_factory=list)
+
+
+class ProfileUpdateRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+
+
+class RoleUpdateRequest(BaseModel):
+    role: str
 
 
 def authenticate(payload: LoginRequest) -> AuthResponse | None:
-    user = DEMO_USERS.get(str(payload.email).lower())
+    email = str(payload.email).lower()
+    user = DEMO_USERS.get(email)
     if not user or user["password"] != payload.password:
         return None
-    return AuthResponse(user_id=user["user_id"], tenant_id=DEMO_TENANT_ID, name=user["name"], email=payload.email, role=user["role"])
+    return AuthResponse(user_id=user["user_id"], tenant_id=DEMO_TENANT_ID, name=user["name"], email=email, role=user["role"], permissions=ROLE_PERMISSIONS[user["role"]])
 
 
 def register(payload: RegisterRequest) -> AuthResponse:
@@ -46,4 +62,8 @@ def register(payload: RegisterRequest) -> AuthResponse:
     role = payload.role if payload.role in {"SECURITY_ANALYST", "SECURITY_REVIEWER"} else "SECURITY_ANALYST"
     user_id = UUID(int=4 + len(DEMO_USERS))
     DEMO_USERS[email] = {"password": payload.password, "user_id": user_id, "role": role, "name": payload.name}
-    return AuthResponse(user_id=user_id, tenant_id=DEMO_TENANT_ID, name=payload.name, email=payload.email, role=role)
+    return AuthResponse(user_id=user_id, tenant_id=DEMO_TENANT_ID, name=payload.name, email=email, role=role, permissions=ROLE_PERMISSIONS[role])
+
+
+def user_response(email: str, user: dict) -> AuthResponse:
+    return AuthResponse(user_id=user["user_id"], tenant_id=DEMO_TENANT_ID, name=user["name"], email=email, role=user["role"], permissions=ROLE_PERMISSIONS[user["role"]])

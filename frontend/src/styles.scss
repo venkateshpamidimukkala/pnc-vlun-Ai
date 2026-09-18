@@ -21,13 +21,43 @@ html, body { margin: 0; min-height: 100%; font-family: Inter, Arial, sans-serif;
 body { font-size: 14px; }
 button, input, select, textarea { font: inherit; }
 button { border: 0; cursor: pointer; }
-button:disabled { cursor: not-allowed; opacity: .55; }
-.btn { display: inline-flex; align-items: center; justify-content: center; gap: .4rem; min-height: 42px; padding: .65rem 1rem; color: #fff; background: var(--orange); border: 0; border-radius: 8px; font-size: .9rem; font-weight: 700; line-height: 1.2; transition: background-color .15s ease, transform .15s ease, box-shadow .15s ease; }
-.btn .material-icons { width: 18px; height: 18px; font-size: 18px; line-height: 18px; }
-.btn:hover { background: var(--orange-dark); box-shadow: 0 4px 10px rgba(220,97,0,.2); }
-.btn:active { transform: translateY(1px); }
-.btn:focus-visible { outline: 3px solid rgba(255,122,26,.3); outline-offset: 2px; }
-.btn-primary, .btn-secondary, .btn-ghost { color: #fff; background: var(--orange); border: 0; }
+
+/* Global Fluent-inspired action system. Keep variants semantic so every page
+   can use the same visual language in cards, tables, forms, and dialogs. */
+.btn, .action-button, .primary-button, .secondary-button, .merge-button, .action-link {
+  display: inline-flex; align-items: center; justify-content: center; gap: .45rem;
+  min-height: 40px; padding: .6rem 1rem; color: #fff !important; background: var(--orange) !important;
+  border: 1px solid transparent !important; border-radius: 12px !important; font-size: .86rem; font-weight: 600 !important;
+  line-height: 1.2; text-decoration: none;
+  transition: background-color .18s ease, border-color .18s ease, box-shadow .18s ease, transform .12s ease;
+}
+.btn .material-icons, .action-button .material-icons { width: 18px; height: 18px; font-size: 18px; line-height: 18px; }
+.btn:hover, .action-button:hover, .primary-button:hover, .merge-button:hover, .action-link:hover { background: #e5680f !important; box-shadow: 0 6px 14px rgba(220,97,0,.2); }
+.btn:active, .action-button:active, .primary-button:active, .secondary-button:active, .merge-button:active, .action-link:active { transform: translateY(1px); box-shadow: 0 2px 5px rgba(16,42,67,.12); }
+.btn:focus-visible, .action-button:focus-visible, .primary-button:focus-visible, .secondary-button:focus-visible, .merge-button:focus-visible, .action-link:focus-visible { outline: 3px solid rgba(255,122,26,.32); outline-offset: 2px; }
+
+/* Primary (orange) */
+.btn-primary, .primary-button, .primary-action { color: #fff !important; background: var(--orange) !important; border-color: transparent !important; }
+/* Secondary (outlined orange) */
+.btn-secondary, .secondary-button { color: var(--orange) !important; background: #fff !important; border-color: var(--orange) !important; }
+.btn-secondary:hover, .secondary-button:hover { color: var(--orange-dark) !important; background: #fff7ef !important; border-color: var(--orange-dark) !important; }
+.btn-secondary:active, .secondary-button:active { color: var(--orange-dark) !important; background: #ffe8d5 !important; }
+/* Ghost (quiet orange text action) */
+.btn-ghost { color: var(--orange) !important; background: transparent !important; border-color: transparent !important; box-shadow: none; }
+.btn-ghost:hover { color: var(--orange-dark) !important; background: #fff7ef !important; box-shadow: none; }
+.btn-ghost:active { background: #ffe8d5 !important; }
+/* Workflow outcome variants */
+.btn-danger, .danger-action { color: #fff !important; background: #d13438 !important; border-color: transparent !important; }
+.btn-danger:hover, .danger-action:hover { background: #b52d31 !important; box-shadow: 0 6px 14px rgba(209,52,56,.2); }
+.btn-success, .success-action { color: #fff !important; background: #107c10 !important; border-color: transparent !important; }
+.btn-success:hover, .success-action:hover { background: #0b650b !important; box-shadow: 0 6px 14px rgba(16,124,16,.2); }
+
+button:disabled, .btn:disabled, .action-button:disabled, .primary-button:disabled, .secondary-button:disabled, .merge-button:disabled {
+  color: #87919a; background: #edf0f2; border-color: #dfe4e7; box-shadow: none; cursor: not-allowed; opacity: 1; transform: none;
+}
+.button-row, .panel-actions, .footer-actions, .toolbar { gap: .75rem; }
+.data-table td:last-child { white-space: nowrap; }
+.data-table td:last-child .btn + .btn { margin-left: .45rem; }
 .page { max-width: 1500px; margin: 0 auto; }
 .page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: 1.5rem; }
 .eyebrow { margin: 0 0 .35rem; color: var(--orange-dark); font-size: .72rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }

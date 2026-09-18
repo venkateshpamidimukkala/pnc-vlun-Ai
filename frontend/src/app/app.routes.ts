@@ -4,10 +4,12 @@ import { authGuard } from './core/auth.guard';
 export const routes: Routes = [
   { path: 'login', loadComponent: () => import('./login/login.component').then(m => m.LoginComponent) },
   { path: 'register', loadComponent: () => import('./register/register.component').then(m => m.RegisterComponent) },
+  { path: 'profile', canActivate: [authGuard], data: { permissions: ['PROFILE_MANAGE'] }, loadComponent: () => import('./profile/profile.component').then(m => m.ProfileComponent) },
+  { path: 'administration/users', canActivate: [authGuard], data: { roles: ['PLATFORM_ADMIN'] }, loadComponent: () => import('./administration/users.component').then(m => m.UsersComponent) },
   { path: '', redirectTo: 'dashboard', pathMatch: 'full' },
   { path: 'dashboard', canActivate: [authGuard], loadComponent: () => import('./dashboard/dashboard.component').then(m => m.DashboardComponent) },
   { path: 'executive', canActivate: [authGuard], loadComponent: () => import('./operations/operations.component').then(m => m.OperationsComponent) },
-  { path: 'security', canActivate: [authGuard], loadComponent: () => import('./operations/operations.component').then(m => m.OperationsComponent) },
+  { path: 'security', canActivate: [authGuard], loadComponent: () => import('./security/security.component').then(m => m.SecurityComponent) },
   { path: 'developer', canActivate: [authGuard], loadComponent: () => import('./operations/operations.component').then(m => m.OperationsComponent) },
   { path: 'execute', canActivate: [authGuard], loadComponent: () => import('./execute/execute.component').then(m => m.ExecuteComponent) },
   { path: 'vulnerabilities', canActivate: [authGuard], loadComponent: () => import('./vulnerabilities/vulnerabilities.component').then(m => m.VulnerabilitiesComponent) },

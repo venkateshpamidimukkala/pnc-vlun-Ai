@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, Field, field_validator
 
-from app.auth import AuthResponse, DEMO_TENANT_ID, LoginRequest, RegisterRequest, authenticate, register
+from app.auth import AuthResponse, DEMO_TENANT_ID, DEMO_USERS, LoginRequest, ProfileUpdateRequest, RegisterRequest, RoleUpdateRequest, ROLE_PERMISSIONS, authenticate, register, user_response
 from app.ai_engine import SecurityRemediationEngine, workflow_payload
 from app.domain import ApprovalDecision, ApprovalItem, AuditEvent, BulkRemediationRequest, Confidence, CopilotRequest, CopilotResponse, DashboardMetrics, FindingStatus, RemediationResponse, Severity, Vulnerability
 from app.exceptions import register_exception_handlers
@@ -138,6 +138,41 @@ def registration(payload: RegisterRequest) -> AuthResponse:
         return register(payload)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/auth/profile", response_model=AuthResponse, tags=["authentication"])
+def profile(principal: Principal = Depends(require_principal)) -> AuthResponse:
+    for email, user in DEMO_USERS.items():
+        if user["user_id"] == principal.subject:
+            return user_response(email, user)
+    raise HTTPException(status_code=404, detail="User profile not found")
+
+
+@app.patch("/api/v1/auth/profile", response_model=AuthResponse, tags=["authentication"])
+def update_profile(payload: ProfileUpdateRequest, principal: Principal = Depends(require_principal)) -> AuthResponse:
+    for email, user in DEMO_USERS.items():
+        if user["user_id"] == principal.subject:
+            user["name"] = payload.name.strip()
+            return user_response(email, user)
+    raise HTTPException(status_code=404, detail="User profile not found")
+
+
+@app.get("/api/v1/admin/users", response_model=list[AuthResponse], tags=["administration"])
+def list_users(principal: Principal = Depends(require_principal)) -> list[AuthResponse]:
+    require_role(principal, "PLATFORM_ADMIN")
+    return [user_response(email, user) for email, user in DEMO_USERS.items()]
+
+
+@app.patch("/api/v1/admin/users/{user_id}/role", response_model=AuthResponse, tags=["administration"])
+def update_user_role(user_id: UUID, payload: RoleUpdateRequest, principal: Principal = Depends(require_principal)) -> AuthResponse:
+    require_role(principal, "PLATFORM_ADMIN")
+    if payload.role not in ROLE_PERMISSIONS:
+        raise HTTPException(status_code=400, detail="Unsupported role")
+    for email, user in DEMO_USERS.items():
+        if user["user_id"] == user_id:
+            user["role"] = payload.role
+            return user_response(email, user)
+    raise HTTPException(status_code=404, detail="User not found")
 
 
 @app.get("/health", tags=["platform"])
