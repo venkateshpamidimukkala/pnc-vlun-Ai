@@ -37,7 +37,7 @@ interface ValidationCheck {
       </section>
 
       <section class="summary-grid">
-        <article class="summary-card status-card"><div class="card-heading"><span>Overall Status</span><span class="status-badge running">IN PROGRESS</span></div><div class="status-content"><div class="progress-ring"><strong>80%</strong><span>complete</span></div><div><strong class="summary-number">8 <small>/ 10</small></strong><p>Checks Passed</p><span class="muted">2 validations require attention</span></div></div></article>
+        <article class="summary-card status-card"><div class="card-heading"><span>Overall Status</span><span class="status-badge" [class.running]="running" [class.blocked]="!running && failedCount > 0">{{running ? 'IN PROGRESS' : failedCount ? 'ACTION REQUIRED' : 'PASSED'}}</span></div><div class="status-content"><div class="progress-ring"><strong>{{completionPercent}}%</strong><span>complete</span></div><div><strong class="summary-number">{{passedCount}} <small>/ {{checks.length}}</small></strong><p>Checks Passed</p><span class="muted">{{failedCount}} validation(s) require attention</span></div></div></article>
         <article class="summary-card"><div class="card-heading"><span>Risk Score</span><span class="risk-badge low">LOW RISK</span></div><strong class="large-value">24<span>/100</span></strong><div class="risk-bar"><span></span></div><p class="muted">Within acceptable merge threshold</p></article>
         <article class="summary-card merge-card"><div class="card-heading"><span>Merge Readiness</span><span class="status-badge blocked">BLOCKED</span></div><div class="merge-indicator"><span class="material-symbols">lock</span><div><strong>Blocked</strong><p>Resolve failed checks to merge</p></div></div></article>
       </section>
@@ -53,7 +53,7 @@ interface ValidationCheck {
         </section>
 
         @if (selectedCheck?.status === 'FAILED') {
-          <aside class="panel failure-panel"><div class="failure-heading"><div><p class="eyebrow error-eyebrow">ACTION REQUIRED</p><h2>{{ selectedCheck.type }} Failures</h2></div><button class="icon-button" (click)="selectedCheck = null" aria-label="Close failure details">×</button></div><h3>Failed Test Cases</h3><ul class="failed-tests"><li>TC-1045 <span>User Login Flow</span></li><li>TC-1078 <span>Session Timeout</span></li><li>TC-1121 <span>Role Permission Validation</span></li></ul><div class="root-cause"><strong>Root Cause</strong><p>Authentication token mismatch after remediation update.</p></div><div class="panel-actions"><button class="action-button">View Logs</button><button class="action-button">Download Report</button><button class="action-button danger-action">Create Jira Bug</button><button class="action-button primary-action">Rerun Tests</button></div></aside>
+          <aside class="panel failure-panel"><div class="failure-heading"><div><p class="eyebrow error-eyebrow">ACTION REQUIRED</p><h2>{{ selectedCheck.type }} Failures</h2></div><button class="icon-button" (click)="selectedCheck = null" aria-label="Close failure details">×</button></div><h3>Failed Test Cases</h3><ul class="failed-tests"><li>TC-1045 <span>User Login Flow</span></li><li>TC-1078 <span>Session Timeout</span></li><li>TC-1121 <span>Role Permission Validation</span></li></ul><div class="root-cause"><strong>Root Cause</strong><p>Authentication token mismatch after remediation update.</p></div><div class="panel-actions"><button class="action-button" type="button" (click)="viewLogs()">View Logs</button><button class="action-button" type="button" (click)="downloadReport()">Download Report</button><button class="action-button danger-action" type="button" (click)="createJiraBug()">Create Jira Bug</button><button class="action-button primary-action" type="button" [disabled]="running" (click)="rerunValidation()">{{ running ? 'Rerunning Tests…' : 'Rerun Tests' }}</button></div></aside>
         } @else {
           <aside class="panel context-panel"><p class="eyebrow">PULL REQUEST CONTEXT</p><h2>Remediation change</h2><div class="context-row"><span>Pull request</span><strong>#482 · Fix auth token handling</strong></div><div class="context-row"><span>Repository</span><strong>pnc-security / identity-service</strong></div><div class="context-row"><span>Commit</span><strong class="mono">a91f7c2 · 4 minutes ago</strong></div><div class="audit-note"><span class="material-symbols">history</span><span><strong>Audit trail active</strong><br><small>Every validation event is recorded for review.</small></span></div></aside>
         }
@@ -64,7 +64,7 @@ interface ValidationCheck {
         <article class="panel readiness-panel"><div class="section-heading"><div><p class="eyebrow">POLICY DECISION</p><h2>Approval Readiness</h2></div><span class="readiness-score">80%</span></div><ul class="checklist">@for (item of approvalChecks; track item.label) {<li [class.failed-item]="!item.pass"><span>{{ item.pass ? '✓' : '!' }}</span>{{ item.label }}</li>}</ul><div class="warning"><span class="material-symbols">warning</span><span>Merge blocked until all mandatory validations pass.</span></div></article>
       </section>
 
-      <footer class="merge-footer"><div><strong>Validation Summary</strong><span><b class="success-text">Passed: 128</b><b class="error-text">Failed: 5</b><b>Blocked Checks: 2</b></span></div><div class="footer-actions"><button class="secondary-button">↻ Rerun Validation</button><button class="merge-button" disabled title="Resolve failed validations before merge.">Merge Blocked</button></div></footer>
+      <footer class="merge-footer"><div><strong>Validation Summary</strong><span><b class="success-text">Passed: {{passedCount}}</b><b class="error-text">Failed: {{failedCount}}</b><b>Blocked Checks: {{blockedCount}}</b></span><span class="action-message" aria-live="polite">{{actionMessage}}</span></div><div class="footer-actions"><button class="secondary-button" type="button" [disabled]="running" (click)="rerunValidation()">{{running ? '↻ Validation Running…' : '↻ Rerun Validation'}}</button><a class="merge-button" href="/approvals" [title]="mergeButtonTitle" (click)="attemptMerge()">{{failedCount > 0 || running ? 'Merge Blocked' : 'Merge Ready'}}</a></div></footer>
     </div>
   `
 })
@@ -77,7 +77,7 @@ export class TestCaseValidationComponent {
     { number: 5, title: 'Approval', subtitle: 'Security & Owner Review', complete: false, current: false }
   ];
 
-  readonly checks: ValidationCheck[] = [
+  checks: ValidationCheck[] = [
     { type: 'Build Validation', status: 'PASSED', duration: '1m 22s', result: 'Build passed', icon: '✓' },
     { type: 'Unit Tests', status: 'PASSED', duration: '42s', result: '125 / 125 Passed', icon: '✓' },
     { type: 'Security Scan', status: 'PASSED', duration: '2m 08s', result: '0 Critical · 0 High', icon: '✓' },
@@ -93,4 +93,74 @@ export class TestCaseValidationComponent {
   readonly approvalChecks = [{ label: 'Build Passed', pass: true }, { label: 'Unit Tests Passed', pass: true }, { label: 'Security Tests Passed', pass: true }, { label: 'Code Coverage Above Threshold', pass: true }, { label: 'Regression Tests Passed', pass: false }, { label: 'Reviewer Signoff', pass: false }];
   selectedCheck: ValidationCheck | null = this.checks[3];
   selectCheck(check: ValidationCheck): void { this.selectedCheck = check.status === 'FAILED' ? check : null; }
+  running = false;
+  actionMessage = '';
+
+  get passedCount(): number { return this.checks.filter(check => check.status === 'PASSED').length; }
+  get failedCount(): number { return this.checks.filter(check => check.status === 'FAILED').length; }
+  get blockedCount(): number { return this.checks.filter(check => check.status === 'FAILED' || check.status === 'PENDING').length; }
+  get completionPercent(): number { return Math.round((this.passedCount / this.checks.length) * 100); }
+  get mergeButtonTitle(): string { return this.running ? 'Wait for validation to finish.' : this.failedCount ? 'Resolve failed validations before merge.' : 'All displayed validations passed.'; }
+
+  rerunValidation(): void {
+    if (this.running) return;
+    this.running = true;
+    this.actionMessage = 'Validation started. Rechecking failed and running gates…';
+    this.checks = this.checks.map(check => check.status === 'PASSED' ? check : {
+      ...check,
+      status: 'RUNNING',
+      result: 'Running validation…',
+      icon: '↻'
+    });
+    window.setTimeout(() => {
+      this.checks = this.checks.map(check => {
+        if (check.type === 'Integration Tests') return { ...check, status: 'PASSED', result: '24 / 24 Passed', icon: '✓' };
+        if (check.type === 'Regression Tests') return { ...check, status: 'FAILED', result: '3 Failed', icon: '×' };
+        if (check.type === 'API Tests') return { ...check, status: 'FAILED', result: '2 Failed', icon: '×' };
+        return check;
+      });
+      this.running = false;
+      this.actionMessage = 'Validation finished. Failed checks still require attention.';
+    }, 1500);
+  }
+
+  attemptMerge(): void {
+    this.actionMessage = this.failedCount > 0
+      ? 'Merge is blocked until all failed validations pass.'
+      : 'Merge is not connected in local mode. Use the governed approval workflow when enabled.';
+  }
+
+  viewLogs(): void {
+    const logs = [
+      'PR-482 validation logs',
+      `Check: ${this.selectedCheck?.type || 'Validation'}`,
+      'Status: FAILED',
+      'Root cause: Authentication token mismatch after remediation update.',
+      'Failed cases: TC-1045, TC-1078, TC-1121'
+    ].join('\n');
+    const logWindow = window.open('', '_blank');
+    if (logWindow) {
+      logWindow.document.title = 'PR-482 Validation Logs';
+      logWindow.document.body.innerHTML = `<pre>${logs}</pre>`;
+      this.actionMessage = 'Validation logs opened in a new tab.';
+    } else {
+      this.actionMessage = 'Allow pop-ups to view validation logs.';
+    }
+  }
+
+  downloadReport(): void {
+    const rows = this.checks.map(check => `${check.type},${check.status},${check.duration},"${check.result}"`).join('\n');
+    const blob = new Blob([`validation,status,duration,result\n${rows}`], { type: 'text/csv' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'pr-482-validation-report.csv';
+    link.click();
+    URL.revokeObjectURL(link.href);
+    this.actionMessage = 'Validation report downloaded.';
+  }
+
+  createJiraBug(): void {
+    this.actionMessage = 'Jira ticket creation is unavailable in local mode. Opening the Jira workspace instead.';
+    window.open('/jira', '_blank');
+  }
 }

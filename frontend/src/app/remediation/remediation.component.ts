@@ -59,7 +59,7 @@ type Severity = '' | 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
           <div class="result-grid">
             <div><small>Matched findings</small><strong>{{ result.matched_vulnerabilities }}</strong></div>
             <div><small>Confidence</small><strong>{{ result.confidence }}</strong></div>
-            <div><small>Branch pattern</small><strong>{{ result.branch_pattern }}</strong></div>
+            <div><small>Branch pattern</small><strong class="branch-pattern">{{ result.branch_pattern }}</strong></div>
           </div>
           <p class="subtitle">{{ result.next_step }}</p>
         </section>
@@ -67,7 +67,7 @@ type Severity = '' | 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
     </div>
   `,
   styles: [`
-    .form-label{display:block;margin:1.1rem 0;color:var(--ink);font-weight:600;font-size:.8rem}.full{display:block;width:100%;margin-top:.45rem}.full-button{width:100%;margin-top:.8rem}.error{margin:1rem 0 0;color:var(--danger)}.steps{padding:0;margin:0;list-style:none}.steps li{position:relative;padding:0 0 1.5rem 2rem;border-left:2px solid #dce6ee}.steps li:last-child{border-left-color:transparent}.steps li::before{content:'';position:absolute;left:-7px;top:0;width:12px;height:12px;background:var(--orange);border:3px solid #fff;border-radius:50%;box-shadow:0 0 0 1px var(--orange)}.steps strong,.steps span{display:block}.steps span{margin-top:.35rem;color:var(--muted);font-size:.78rem;line-height:1.5}.result{margin-top:1rem}.result-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem}.result-grid div{padding:1rem;background:#f8fafc;border-radius:8px}.result-grid small,.result-grid strong{display:block}.result-grid small{color:var(--muted);font-size:.72rem}.result-grid strong{margin-top:.4rem;font-size:.95rem}@media(max-width:600px){.result-grid{grid-template-columns:1fr}}
+    .form-label{display:block;margin:1.1rem 0;color:var(--ink);font-weight:600;font-size:.8rem}.full{display:block;width:100%;margin-top:.45rem}.full-button{width:100%;margin-top:.8rem}.error{margin:1rem 0 0;color:var(--danger)}.steps{padding:0;margin:0;list-style:none}.steps li{position:relative;padding:0 0 1.5rem 2rem;border-left:2px solid #dce6ee}.steps li:last-child{border-left-color:transparent}.steps li::before{content:'';position:absolute;left:-7px;top:0;width:12px;height:12px;background:var(--orange);border:3px solid #fff;border-radius:50%;box-shadow:0 0 0 1px var(--orange)}.steps strong,.steps span{display:block}.steps span{margin-top:.35rem;color:var(--muted);font-size:.78rem;line-height:1.5}.result{margin-top:1rem}.result-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem}.result-grid div{min-width:0;padding:1rem;background:#f8fafc;border-radius:8px}.result-grid small,.result-grid strong{display:block}.result-grid small{color:var(--muted);font-size:.72rem}.result-grid strong{margin-top:.4rem;font-size:.95rem}.branch-pattern{overflow-wrap:anywhere}@media(max-width:600px){.result-grid{grid-template-columns:1fr}}
   `],
 })
 export class RemediationComponent {

@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 from app.domain import Severity, Vulnerability
 from app.vulnerability_classification import VulnerabilityClassifier
 from app.scanners import detect_stack
+from app.performance import timed
 
 _EXTENSIONS = {
     ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".php", ".rb", ".cs",
@@ -23,6 +24,13 @@ _SKIP = {".git", ".idea", ".angular", "node_modules", "dist", "build", "target",
 _MAX_SCAN_FILES = 2_000
 _MAX_SCAN_FILE_BYTES = 1_000_000
 _KNOWN_MNEMONICS = {"PME", "PRT", "PSE", "DAL", "PRE"}
+_SCAN_RULES = (
+    (re.compile(r"(SELECT\s+.+\s+FROM|execute\s*\(.*%|cursor\.execute\s*\(.*\+)"), "SQL_INJECTION", Severity.HIGH, "User-controlled input may reach a SQL query without parameterization.", "CWE-89"),
+    (re.compile(r"(innerHTML\s*=|document\.write\s*\()"), "XSS", Severity.HIGH, "Untrusted content is written to an HTML sink.", "CWE-79"),
+    (re.compile(r"(?i)(password|secret|api[_-]?key|token)\s*(?:=|:)\s*['\"]?(?!.*(?:env|config))[^'\"\s<]+['\"]?"), "SECRETS_EXPOSURE", Severity.CRITICAL, "A credential-like value is hardcoded in source or configuration.", "CWE-798"),
+    (re.compile(r"(?i)<(password|secret|api[_-]?key|token)>\s*[^<\s]+\s*</\1>"), "SECRETS_EXPOSURE", Severity.CRITICAL, "A credential-like value is hardcoded in source or configuration.", "CWE-798"),
+    (re.compile(r"(os\.system\s*\(|subprocess\.(?:run|Popen|call)\s*\(.*\+|child_process\.exec\s*\()"), "COMMAND_INJECTION", Severity.CRITICAL, "External command execution uses potentially tainted input.", "CWE-78"),
+)
 
 
 @dataclass
@@ -86,19 +94,24 @@ class LocalSecurityMvp:
                      if str(item.get("finding_id")) == str(finding_id)), None)
 
     def scan(self, tenant_id: UUID, repo_path: str, repository) -> tuple[dict, list[Vulnerability]]:
-        root = Path(repo_path).expanduser().resolve()
-        if not root.is_dir():
-            raise ValueError("Repository path must point to an existing directory")
+        with timed("scan.validate_repository"):
+            root = Path(repo_path).expanduser().resolve()
+            if not root.is_dir():
+                raise ValueError("Repository path must point to an existing directory")
         app_id = uuid4()
         name = root.name or str(root)
-        app = {"id": app_id, "tenant_id": tenant_id, "name": name, "repo_path": str(root), "technology_stack": detect_stack(root), "created_date": datetime.now(timezone.utc), "last_scan_date": datetime.now(timezone.utc)}
-        findings = self._scanner_findings(root, tenant_id, name, self._infer_mnemonic(root))
-        for finding in findings:
-            repository.seed(finding)
-        app["total_vulnerabilities"] = len(findings)
-        app["critical_issues"] = sum(f.severity == Severity.CRITICAL for f in findings)
-        self.data.applications[app_id] = app
-        self._save("application", app_id, app)
+        with timed("scan.detect_stack"):
+            stack = detect_stack(root)
+        app = {"id": app_id, "tenant_id": tenant_id, "name": name, "repo_path": str(root), "technology_stack": stack, "created_date": datetime.now(timezone.utc), "last_scan_date": datetime.now(timezone.utc)}
+        with timed("scan.sast_scan"):
+            findings = self._scanner_findings(root, tenant_id, name, self._infer_mnemonic(root))
+        with timed("scan.persist_findings", detail=f"{len(findings)} findings"):
+            for finding in findings:
+                repository.seed(finding)
+            app["total_vulnerabilities"] = len(findings)
+            app["critical_issues"] = sum(f.severity == Severity.CRITICAL for f in findings)
+            self.data.applications[app_id] = app
+            self._save("application", app_id, app)
         return app, findings
 
     @staticmethod
@@ -109,22 +122,16 @@ class LocalSecurityMvp:
 
     def _scanner_findings(self, root: Path, tenant_id: UUID, app_name: str, mnemonic: str = "LOCAL") -> list[Vulnerability]:
         findings: list[Vulnerability] = []
+        classifier = VulnerabilityClassifier()
         for path in self._scan_files(root):
             try:
                 text = path.read_text(encoding="utf-8", errors="ignore")
             except OSError:
                 continue
-            rules = [
-                (r"(SELECT\s+.+\s+FROM|execute\s*\(.*%|cursor\.execute\s*\(.*\+)", "SQL_INJECTION", Severity.HIGH, "User-controlled input may reach a SQL query without parameterization.", "CWE-89"),
-                (r"(innerHTML\s*=|document\.write\s*\()", "XSS", Severity.HIGH, "Untrusted content is written to an HTML sink.", "CWE-79"),
-                (r"(?i)(password|secret|api[_-]?key|token)\s*(?:=|:)\s*['\"]?(?!.*(?:env|config))[^'\"\s<]+['\"]?", "SECRETS_EXPOSURE", Severity.CRITICAL, "A credential-like value is hardcoded in source or configuration.", "CWE-798"),
-                (r"(?i)<(password|secret|api[_-]?key|token)>\s*[^<\s]+\s*</\1>", "SECRETS_EXPOSURE", Severity.CRITICAL, "A credential-like value is hardcoded in source or configuration.", "CWE-798"),
-                (r"(os\.system\s*\(|subprocess\.(?:run|Popen|call)\s*\(.*\+|child_process\.exec\s*\()", "COMMAND_INJECTION", Severity.CRITICAL, "External command execution uses potentially tainted input.", "CWE-78"),
-            ]
             for number, line in enumerate(text.splitlines(), 1):
-                for pattern, category, severity, description, cwe in rules:
-                    if re.search(pattern, line):
-                        classification = VulnerabilityClassifier().classify(Vulnerability(tenant_id=tenant_id, mnemonic=mnemonic, application=app_name, repository=str(root), title=category.replace("_", " "), category=category, severity=severity, cwe=cwe))
+                for pattern, category, severity, description, cwe in _SCAN_RULES:
+                    if pattern.search(line):
+                        classification = classifier.classify(Vulnerability(tenant_id=tenant_id, mnemonic=mnemonic, application=app_name, repository=str(root), title=category.replace("_", " "), category=category, severity=severity, cwe=cwe))
                         findings.append(Vulnerability(tenant_id=tenant_id, mnemonic=mnemonic, application=app_name, repository=str(root), title=f"{category.replace('_', ' ').title()} in {path.name}", category=category, severity=severity, cwe=cwe, cvss=classification.risk_score, description=description, file_name=str(path.relative_to(root)), line_number=number, business_impact="May expose customer data or compromise application integrity.", technical_impact=description, risk_score=classification.risk_score))
                         break
         return findings

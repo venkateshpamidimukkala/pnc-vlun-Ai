@@ -8,29 +8,32 @@ from uuid import UUID
 from sqlalchemy import text
 
 from app.persistence import transaction
+from app.performance import timed
 
 
 class SqlMvpRepository:
     """Store provider-neutral MVP records in PostgreSQL JSONB."""
 
     def save(self, tenant_id: UUID, record_type: str, record_id: UUID, payload: dict[str, Any]) -> None:
-        with transaction(tenant_id) as session:
-            session.execute(text("""
+        with timed("database.mvp_save", detail=record_type):
+            with transaction(tenant_id) as session:
+                session.execute(text("""
                 insert into pnc.mvp_read_models (id, tenant_id, record_type, payload)
                 values (:id, :tenant_id, :record_type, cast(:payload as jsonb))
                 on conflict (id) do update set payload = excluded.payload, modified_at = now()
                 where pnc.mvp_read_models.tenant_id = excluded.tenant_id
-            """), {"id": str(record_id), "tenant_id": str(tenant_id), "record_type": record_type,
-                    "payload": _json_dumps(payload)})
+                """), {"id": str(record_id), "tenant_id": str(tenant_id), "record_type": record_type,
+                        "payload": _json_dumps(payload)})
 
     def list(self, tenant_id: UUID, record_type: str) -> list[dict[str, Any]]:
-        with transaction(tenant_id) as session:
-            rows = session.execute(text("""
+        with timed("database.mvp_list", detail=record_type):
+            with transaction(tenant_id) as session:
+                rows = session.execute(text("""
                 select payload from pnc.mvp_read_models
                 where tenant_id = :tenant_id and record_type = :record_type
                 order by modified_at desc
-            """), {"tenant_id": str(tenant_id), "record_type": record_type}).mappings()
-            return [_restore_json(row["payload"]) for row in rows]
+                """), {"tenant_id": str(tenant_id), "record_type": record_type}).mappings()
+                return [_restore_json(row["payload"]) for row in rows]
 
 
 def _json_dumps(value: Any) -> str:

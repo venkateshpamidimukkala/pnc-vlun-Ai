@@ -64,6 +64,7 @@ def test_bulk_remediation_is_tenant_scoped_and_approval_gated():
     assert response.status_code == 202
     assert response.json()["matched_vulnerabilities"] == 1
     assert response.json()["status"] == "AWAITING_APPROVAL"
+    assert response.json()["branch_pattern"] == f"pnc/remediation/{response.json()['workflow_id']}"
 
 
 def test_bulk_scope_requires_selector():

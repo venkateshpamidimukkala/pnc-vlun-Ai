@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+import logging
 import shutil
 import subprocess
 import tempfile
@@ -25,6 +26,9 @@ from app.settings import settings
 from app.workflow import RemediationWorkflow
 from app.mvp import LocalSecurityMvp
 from app import jobs
+from app.performance import TimingTimeline, timed
+
+logger = logging.getLogger("pnc.api")
 
 
 class ScanImportRequest(BaseModel):
@@ -58,7 +62,7 @@ class GitScanRequest(BaseModel):
     def validate_repository_url(cls, value: str) -> str:
         value = value.strip()
         parsed = urlparse(value)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        if value.count("://") != 1 or parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("repository_url must be an http(s) Git repository URL")
         return value
 
@@ -118,9 +122,16 @@ register_exception_handlers(app)
 
 @app.middleware("http")
 async def request_timing(request: Request, call_next):
+    timeline = TimingTimeline()
     started = perf_counter()
     response = await call_next(request)
-    response.headers["X-Process-Time-Ms"] = f"{(perf_counter() - started) * 1000:.2f}"
+    duration = (perf_counter() - started) * 1000
+    response.headers["X-Process-Time-Ms"] = f"{duration:.2f}"
+    response.headers["X-Request-ID"] = timeline.correlation_id
+    if duration >= 1000:
+        logger.warning("[%s] SLOW HTTP %s %s completed (%.2f ms)", timeline.correlation_id, request.method, request.url.path, duration)
+    else:
+        logger.info("[%s] HTTP %s %s completed (%.2f ms)", timeline.correlation_id, request.method, request.url.path, duration)
     return response
 
 
@@ -228,7 +239,8 @@ def mvp_scan(payload: LocalScanRequest, principal: Principal = Depends(require_p
 
 def _scan_directory(root: Path, principal: Principal) -> dict:
     try:
-        application, findings = mvp.scan(principal.tenant_id, str(root), repository)
+        with timed("scan.directory_job"):
+            application, findings = mvp.scan(principal.tenant_id, str(root), repository)
     except (OSError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     scan_id = uuid4()
@@ -241,8 +253,6 @@ def mvp_job(job_id: UUID, principal: Principal = Depends(require_principal)) -> 
     job = jobs.get(job_id, principal.tenant_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Background job not found")
-    if job["status"] == "FAILED":
-        raise HTTPException(status_code=400, detail=job.get("error", "Background job failed"))
     return job
 
 
@@ -255,7 +265,8 @@ def mvp_git_scan(payload: GitScanRequest, principal: Principal = Depends(require
 def _git_scan_job(repository_url: str, principal: Principal) -> dict:
     workspace = Path(tempfile.mkdtemp(prefix="pnc-scan-"))
     try:
-        result = subprocess.run(["git", "clone", "--depth", "1", repository_url, str(workspace / "repository")], capture_output=True, text=True, timeout=120, check=False)
+        with timed("git.clone", detail="depth=1"):
+            result = subprocess.run(["git", "clone", "--depth", "1", repository_url, str(workspace / "repository")], capture_output=True, text=True, timeout=120, check=False)
         if result.returncode != 0:
             raise ValueError((result.stderr.strip() or "Git clone failed")[-500:])
         return _scan_directory(workspace / "repository", principal)
@@ -447,7 +458,7 @@ def request_bulk_remediation(payload: BulkRemediationRequest, principal: Princip
         repository.update_status(row.id, FindingStatus.IN_REVIEW)
     workflow_id = uuid4()
     audit_repository.append(AuditEvent(event_type="REMEDIATION_REQUESTED", aggregate_id=workflow_id, actor_id=principal.subject, tenant_id=principal.tenant_id))
-    return RemediationResponse(workflow_id=workflow_id, status="AWAITING_APPROVAL", matched_vulnerabilities=len(matches), branch_pattern="pnc/remediation/{workflow_id}", confidence=Confidence.HIGH if matches else Confidence.LOW, next_step="Validation complete. Review the approval queue to authorize the governed change.")
+    return RemediationResponse(workflow_id=workflow_id, status="AWAITING_APPROVAL", matched_vulnerabilities=len(matches), branch_pattern=f"pnc/remediation/{workflow_id}", confidence=Confidence.HIGH if matches else Confidence.LOW, next_step="Validation complete. Review the approval queue to authorize the governed change.")
 
 
 @app.get("/api/v1/approvals", response_model=list[ApprovalItem], tags=["approvals"])
@@ -497,15 +508,18 @@ def list_engine_integrations(_: Principal = Depends(require_principal)) -> list[
 
 @app.post("/api/v1/engine/workflows", status_code=status.HTTP_202_ACCEPTED, tags=["ai-engine"])
 def create_engine_workflow(payload: EngineWorkflowRequest, principal: Principal = Depends(require_principal)) -> dict:
-    rows = tenant_rows(principal)
+    with timed("workflow.load_findings"):
+        rows = tenant_rows(principal)
     if payload.finding_ids:
         tenant_finding_ids = {row.id for row in rows}
         missing_ids = [finding_id for finding_id in payload.finding_ids if finding_id not in tenant_finding_ids]
         if missing_ids:
             raise HTTPException(status_code=404, detail="One or more findings were not found in the current tenant")
     selected = [row for row in rows if not payload.finding_ids or row.id in payload.finding_ids]
-    workflow_state = engine.create_workflow(principal.tenant_id, principal.subject, payload.project, payload.repository_path, selected)
-    audit_repository.append(AuditEvent(event_type="ENGINE_WORKFLOW_CREATED", aggregate_id=workflow_state.workflow_id, actor_id=principal.subject, tenant_id=principal.tenant_id))
+    with timed("workflow.classify_remediate_validate", detail=f"{len(selected)} findings"):
+        workflow_state = engine.create_workflow(principal.tenant_id, principal.subject, payload.project, payload.repository_path, selected)
+    with timed("workflow.persist_audit"):
+        audit_repository.append(AuditEvent(event_type="ENGINE_WORKFLOW_CREATED", aggregate_id=workflow_state.workflow_id, actor_id=principal.subject, tenant_id=principal.tenant_id))
     return workflow_payload(workflow_state)
 
 

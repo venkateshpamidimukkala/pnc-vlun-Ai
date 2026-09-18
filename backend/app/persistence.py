@@ -7,6 +7,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.settings import settings
+from app.performance import timed
 
 
 _engine = create_engine(
@@ -25,9 +26,11 @@ def transaction(tenant_id: UUID) -> Generator[Session, None, None]:
     """Open a transaction and set the PostgreSQL RLS tenant context."""
     session = SessionFactory()
     try:
-        session.execute(text("select set_config('app.tenant_id', :tenant_id, true)"), {"tenant_id": str(tenant_id)})
+        with timed("database.set_tenant_context"):
+            session.execute(text("select set_config('app.tenant_id', :tenant_id, true)"), {"tenant_id": str(tenant_id)})
         yield session
-        session.commit()
+        with timed("database.commit"):
+            session.commit()
     except Exception:
         session.rollback()
         raise
