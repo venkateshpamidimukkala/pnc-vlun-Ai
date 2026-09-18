@@ -1,10 +1,16 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 from time import perf_counter
 from typing import Annotated
 from uuid import UUID, uuid4
+from urllib.parse import urlparse
+from zipfile import BadZipFile, ZipFile
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, Field, field_validator
@@ -18,6 +24,7 @@ from app.security import Principal, require_principal, require_role
 from app.settings import settings
 from app.workflow import RemediationWorkflow
 from app.mvp import LocalSecurityMvp
+from app import jobs
 
 
 class ScanImportRequest(BaseModel):
@@ -41,6 +48,19 @@ class EngineWorkflowRequest(BaseModel):
 
 class LocalScanRequest(BaseModel):
     repository_path: str = Field(min_length=1, max_length=1000)
+
+
+class GitScanRequest(BaseModel):
+    repository_url: str = Field(min_length=8, max_length=2000)
+
+    @field_validator("repository_url")
+    @classmethod
+    def validate_repository_url(cls, value: str) -> str:
+        value = value.strip()
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("repository_url must be an http(s) Git repository URL")
+        return value
 
 
 class FindingActionRequest(BaseModel):
@@ -152,24 +172,94 @@ def import_scan(payload: ScanImportRequest, principal: Principal = Depends(requi
 
 
 @app.get("/api/v1/vulnerabilities", response_model=list[Vulnerability], tags=["vulnerabilities"])
-def list_vulnerabilities(severity: Annotated[Severity | None, Query()] = None, finding_status: Annotated[FindingStatus | None, Query(alias="status")] = None, principal: Principal = Depends(require_principal)) -> list[Vulnerability]:
+def list_vulnerabilities(severity: Annotated[Severity | None, Query()] = None, finding_status: Annotated[FindingStatus | None, Query(alias="status")] = None, limit: Annotated[int, Query(ge=1, le=500)] = 100, offset: Annotated[int, Query(ge=0)] = 0, principal: Principal = Depends(require_principal)) -> list[Vulnerability]:
     rows = tenant_rows(principal)
     if severity:
         rows = [row for row in rows if row.severity == severity]
     if finding_status:
         rows = [row for row in rows if row.status == finding_status]
-    return rows
+    return rows[offset:offset + limit]
 
 
 @app.post("/api/v1/mvp/scans", status_code=status.HTTP_202_ACCEPTED, tags=["mvp"])
 def mvp_scan(payload: LocalScanRequest, principal: Principal = Depends(require_principal)) -> dict:
+    repository_path = payload.repository_path.strip()
+    root = Path(repository_path).expanduser()
+    if not root.exists() or not root.is_dir():
+        raise HTTPException(status_code=400, detail="Repository path must be an existing directory visible to the API server")
+    job_id = jobs.submit("LOCAL_SCAN", principal.tenant_id, _scan_directory, root, principal)
+    return {"scan_id": str(job_id), "job_id": str(job_id), "scanner": "Custom Local SAST Scanner", "status": "QUEUED"}
+
+
+def _scan_directory(root: Path, principal: Principal) -> dict:
     try:
-        application, findings = mvp.scan(principal.tenant_id, payload.repository_path, repository)
-    except ValueError as exc:
+        application, findings = mvp.scan(principal.tenant_id, str(root), repository)
+    except (OSError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     scan_id = uuid4()
     audit_repository.append(AuditEvent(event_type="REPOSITORY_SCAN", aggregate_id=scan_id, actor_id=principal.subject, tenant_id=principal.tenant_id))
-    return {"scan_id": str(scan_id), "application": application, "findings": findings, "scanner": "Semgrep/Bandit-compatible local rules", "status": "COMPLETED"}
+    return {"scan_id": str(scan_id), "application": application, "findings": findings, "scanner": "Custom Local SAST Scanner", "status": "COMPLETED"}
+
+
+@app.get("/api/v1/mvp/jobs/{job_id}", tags=["mvp"])
+def mvp_job(job_id: UUID, principal: Principal = Depends(require_principal)) -> dict:
+    job = jobs.get(job_id, principal.tenant_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Background job not found")
+    if job["status"] == "FAILED":
+        raise HTTPException(status_code=400, detail=job.get("error", "Background job failed"))
+    return job
+
+
+@app.post("/api/v1/mvp/scans/git", status_code=status.HTTP_202_ACCEPTED, tags=["mvp"])
+def mvp_git_scan(payload: GitScanRequest, principal: Principal = Depends(require_principal)) -> dict:
+    job_id = jobs.submit("GIT_SCAN", principal.tenant_id, _git_scan_job, payload.repository_url, principal)
+    return {"scan_id": str(job_id), "job_id": str(job_id), "scanner": "Custom Local SAST Scanner", "status": "QUEUED"}
+
+
+def _git_scan_job(repository_url: str, principal: Principal) -> dict:
+    workspace = Path(tempfile.mkdtemp(prefix="pnc-scan-"))
+    try:
+        result = subprocess.run(["git", "clone", "--depth", "1", repository_url, str(workspace / "repository")], capture_output=True, text=True, timeout=120, check=False)
+        if result.returncode != 0:
+            raise ValueError((result.stderr.strip() or "Git clone failed")[-500:])
+        return _scan_directory(workspace / "repository", principal)
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
+@app.post("/api/v1/mvp/scans/upload", status_code=status.HTTP_202_ACCEPTED, tags=["mvp"])
+def mvp_upload_scan(file: UploadFile = File(...), principal: Principal = Depends(require_principal)) -> dict:
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Upload a ZIP archive containing the repository")
+    archive_bytes = file.file.read()
+    if len(archive_bytes) > settings.max_scan_payload_bytes:
+        raise HTTPException(status_code=413, detail="Upload exceeds the configured scan size limit")
+    job_id = jobs.submit("UPLOAD_SCAN", principal.tenant_id, _upload_scan_job, archive_bytes, principal)
+    return {"scan_id": str(job_id), "job_id": str(job_id), "scanner": "Custom Local SAST Scanner", "status": "QUEUED"}
+
+
+def _upload_scan_job(archive_bytes: bytes, principal: Principal) -> dict:
+    workspace = Path(tempfile.mkdtemp(prefix="pnc-scan-"))
+    try:
+        archive = workspace / "repository.zip"
+        archive.write_bytes(archive_bytes)
+        extract_root = workspace / "repository"
+        extract_root.mkdir()
+        with ZipFile(archive) as zipped:
+            members = zipped.infolist()
+            if len(members) > 5000 or sum(item.file_size for item in members) > 100 * 1024 * 1024:
+                raise ValueError("ZIP archive exceeds the 5,000-file or 100 MB scan limit")
+            for item in members:
+                target = (extract_root / item.filename).resolve()
+                if extract_root not in target.parents:
+                    raise ValueError("ZIP archive contains an unsafe path")
+            zipped.extractall(extract_root)
+        return _scan_directory(extract_root, principal)
+    except BadZipFile as exc:
+        raise ValueError("Upload is not a valid ZIP archive") from exc
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
 
 
 @app.get("/api/v1/mvp/vulnerabilities/{finding_id}", tags=["mvp"])
@@ -229,6 +319,49 @@ def mvp_pull_request(finding_id: UUID, principal: Principal = Depends(require_pr
 @app.get("/api/v1/mvp/applications", tags=["mvp"])
 def mvp_applications(principal: Principal = Depends(require_principal)) -> list[dict]:
     return mvp.records("application", principal.tenant_id)
+
+
+@app.get("/api/v1/mvp/application-inventory", tags=["mvp"])
+def mvp_application_inventory(principal: Principal = Depends(require_principal)) -> list[dict]:
+    """Return tenant applications grouped by mnemonic and repository."""
+    groups: dict[str, dict] = {}
+    rows = tenant_rows(principal)
+    application_records = mvp.records("application", principal.tenant_id)
+
+    def group_for(mnemonic: str) -> dict:
+        return groups.setdefault(mnemonic, {"mnemonic": mnemonic, "total_findings": 0, "critical_findings": 0, "applications": {}})
+
+    for item in application_records:
+        name = str(item["name"])
+        group_for("LOCAL")["applications"].setdefault(name, {
+            "name": name, "repo_path": item.get("repo_path", ""), "total_findings": 0,
+            "critical_findings": 0, "repositories": {},
+        })
+
+    for row in rows:
+        group = group_for(row.mnemonic)
+        application = group["applications"].setdefault(row.application, {
+            "name": row.application, "repo_path": row.repository, "total_findings": 0,
+            "critical_findings": 0, "repositories": {},
+        })
+        repo = application["repositories"].setdefault(row.repository, {
+            "name": row.repository, "total_findings": 0, "critical_findings": 0,
+        })
+        repo["total_findings"] += 1
+        repo["critical_findings"] += row.severity == Severity.CRITICAL
+        application["total_findings"] += 1
+        application["critical_findings"] += row.severity == Severity.CRITICAL
+        group["total_findings"] += 1
+        group["critical_findings"] += row.severity == Severity.CRITICAL
+
+    result = []
+    for group in sorted(groups.values(), key=lambda item: item["mnemonic"]):
+        group["applications"] = [
+            {**application, "repositories": sorted(application["repositories"].values(), key=lambda item: item["name"])}
+            for application in sorted(group["applications"].values(), key=lambda item: item["name"])
+        ]
+        result.append(group)
+    return result
 
 
 @app.get("/api/v1/mvp/remediations", tags=["mvp"])
@@ -310,8 +443,9 @@ def copilot_query(payload: CopilotRequest, principal: Principal = Depends(requir
 
 
 @app.get("/api/v1/audit/events", response_model=list[AuditEvent], tags=["audit"])
-def list_audit_events(principal: Principal = Depends(require_principal)) -> list[AuditEvent]:
-    return [event for event in audit_repository if event.tenant_id == principal.tenant_id] if demo_mode else audit_repository.list(principal.tenant_id)
+def list_audit_events(limit: Annotated[int, Query(ge=1, le=500)] = 100, offset: Annotated[int, Query(ge=0)] = 0, principal: Principal = Depends(require_principal)) -> list[AuditEvent]:
+    events = [event for event in audit_repository if event.tenant_id == principal.tenant_id] if demo_mode else audit_repository.list(principal.tenant_id, limit=limit, offset=offset)
+    return events[offset:offset + limit] if demo_mode else events
 
 
 @app.get("/api/v1/engine/agents", tags=["ai-engine"])

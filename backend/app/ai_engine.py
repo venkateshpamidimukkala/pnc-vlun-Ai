@@ -75,6 +75,7 @@ class SecurityRemediationEngine:
                 "jira": {"status": "DISABLED_IN_LOCAL_MODE"},
                 "pull_request": {"status": "PENDING_APPROVAL" if all_valid else "BLOCKED"},
                 "approval": {"status": "PENDING" if all_valid else "NOT_READY", "required_levels": ["SECURITY_TEAM", "APPLICATION_TEAM", "MANAGER"]},
+                "merge": {"status": "BLOCKED_PENDING_APPROVAL" if all_valid else "BLOCKED_VALIDATION"},
                 "knowledge": {"status": "READY_TO_PERSIST", "records": len(findings)},
             },
         )

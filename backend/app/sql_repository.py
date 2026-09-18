@@ -13,7 +13,7 @@ from app.persistence import transaction
 
 
 class SqlVulnerabilityRepository:
-    def list(self, tenant_id: UUID, limit: int = 1000) -> list[Vulnerability]:
+    def list(self, tenant_id: UUID, limit: int = 100, offset: int = 0) -> list[Vulnerability]:
         with transaction(tenant_id) as session:
             rows = session.execute(text("""
                 select v.id, v.tenant_id, v.fingerprint, v.title, v.category, v.severity, v.cve, v.cwe, v.cvss,
@@ -24,8 +24,8 @@ class SqlVulnerabilityRepository:
                 join pnc.applications a on a.id = r.application_id
                 join pnc.mnemonics m on m.id = a.mnemonic_id
                 where v.tenant_id = :tenant_id and v.deleted_at is null
-                order by v.created_at desc limit :limit
-            """), {"tenant_id": str(tenant_id), "limit": limit}).mappings()
+                 order by v.created_at desc limit :limit offset :offset
+            """), {"tenant_id": str(tenant_id), "limit": limit, "offset": offset}).mappings()
             return [self._model(row) for row in rows]
 
     def get(self, tenant_id: UUID, vulnerability_id: UUID) -> Vulnerability | None:
@@ -99,15 +99,15 @@ class SqlAuditRepository:
                     "aggregate_id": str(event.aggregate_id), "actor": str(event.actor_id),
                     "occurred_at": event.occurred_at or datetime.now(timezone.utc)})
 
-    def list(self, tenant_id: UUID) -> list[AuditEvent]:
+    def list(self, tenant_id: UUID, limit: int = 100, offset: int = 0) -> list[AuditEvent]:
         with transaction(tenant_id) as session:
             rows = session.execute(text("""
                 select event_type, aggregate_id, actor_user_id, tenant_id, occurred_at
                 from pnc.audit_events
                 where tenant_id = :tenant_id
                 order by occurred_at desc
-                limit 1000
-            """), {"tenant_id": str(tenant_id)}).mappings()
+                 limit :limit offset :offset
+            """), {"tenant_id": str(tenant_id), "limit": limit, "offset": offset}).mappings()
             return [AuditEvent(event_type=row["event_type"], aggregate_id=row["aggregate_id"],
                 actor_id=row["actor_user_id"], tenant_id=row["tenant_id"], occurred_at=row["occurred_at"])
                 for row in rows]

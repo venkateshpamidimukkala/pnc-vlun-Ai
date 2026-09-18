@@ -17,7 +17,7 @@ export const routes: Routes = [
   { path: 'applications', canActivate: [authGuard], loadComponent: () => import('./operations/operations.component').then(m => m.OperationsComponent) },
   { path: 'jira', canActivate: [authGuard], loadComponent: () => import('./operations/operations.component').then(m => m.OperationsComponent) },
   { path: 'pull-requests', canActivate: [authGuard], loadComponent: () => import('./operations/operations.component').then(m => m.OperationsComponent) },
-  { path: 'test-case-validation', canActivate: [authGuard], loadComponent: () => import('./operations/operations.component').then(m => m.OperationsComponent) },
+  { path: 'test-case-validation', canActivate: [authGuard], loadComponent: () => import('./test-case-validation/test-case-validation.component').then(m => m.TestCaseValidationComponent) },
   { path: 'security-gateway', canActivate: [authGuard], loadComponent: () => import('./operations/operations.component').then(m => m.OperationsComponent) },
   { path: 'audit-log', canActivate: [authGuard], loadComponent: () => import('./operations/operations.component').then(m => m.OperationsComponent) },
   { path: 'pr-history', canActivate: [authGuard], loadComponent: () => import('./operations/operations.component').then(m => m.OperationsComponent) },

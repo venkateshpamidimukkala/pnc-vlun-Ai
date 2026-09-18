@@ -1,6 +1,8 @@
 """Small, provider-safe vertical slice for local vulnerability remediation."""
 from __future__ import annotations
 
+import os
+import ast
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -12,8 +14,15 @@ from app.domain import Severity, Vulnerability
 from app.vulnerability_classification import VulnerabilityClassifier
 from app.scanners import detect_stack
 
-_EXTENSIONS = {".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".php", ".rb", ".cs"}
-_SKIP = {".git", "node_modules", "dist", "build", ".venv", "venv", "__pycache__"}
+_EXTENSIONS = {
+    ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".php", ".rb", ".cs",
+    ".json", ".yaml", ".yml", ".properties", ".env",
+}
+_SPECIAL_FILES = {"pom.xml", "build.gradle", "build.gradle.kts", "dockerfile", ".env"}
+_SKIP = {".git", ".idea", ".angular", "node_modules", "dist", "build", "target", ".venv", "venv", "__pycache__", ".pytest_cache"}
+_MAX_SCAN_FILES = 2_000
+_MAX_SCAN_FILE_BYTES = 1_000_000
+_KNOWN_MNEMONICS = {"PME", "PRT", "PSE", "DAL", "PRE"}
 
 
 @dataclass
@@ -83,7 +92,7 @@ class LocalSecurityMvp:
         app_id = uuid4()
         name = root.name or str(root)
         app = {"id": app_id, "tenant_id": tenant_id, "name": name, "repo_path": str(root), "technology_stack": detect_stack(root), "created_date": datetime.now(timezone.utc), "last_scan_date": datetime.now(timezone.utc)}
-        findings = self._scanner_findings(root, tenant_id, name)
+        findings = self._scanner_findings(root, tenant_id, name, self._infer_mnemonic(root))
         for finding in findings:
             repository.seed(finding)
         app["total_vulnerabilities"] = len(findings)
@@ -92,11 +101,15 @@ class LocalSecurityMvp:
         self._save("application", app_id, app)
         return app, findings
 
-    def _scanner_findings(self, root: Path, tenant_id: UUID, app_name: str) -> list[Vulnerability]:
+    @staticmethod
+    def _infer_mnemonic(root: Path) -> str:
+        """Use a known mnemonic present in the selected path, with a safe fallback."""
+        tokens = re.split(r"[^A-Za-z0-9]+", str(root).upper())
+        return next((token for token in tokens if token in _KNOWN_MNEMONICS), "LOCAL")
+
+    def _scanner_findings(self, root: Path, tenant_id: UUID, app_name: str, mnemonic: str = "LOCAL") -> list[Vulnerability]:
         findings: list[Vulnerability] = []
-        for path in root.rglob("*"):
-            if not path.is_file() or path.suffix.lower() not in _EXTENSIONS or any(part in _SKIP for part in path.parts):
-                continue
+        for path in self._scan_files(root):
             try:
                 text = path.read_text(encoding="utf-8", errors="ignore")
             except OSError:
@@ -104,16 +117,36 @@ class LocalSecurityMvp:
             rules = [
                 (r"(SELECT\s+.+\s+FROM|execute\s*\(.*%|cursor\.execute\s*\(.*\+)", "SQL_INJECTION", Severity.HIGH, "User-controlled input may reach a SQL query without parameterization.", "CWE-89"),
                 (r"(innerHTML\s*=|document\.write\s*\()", "XSS", Severity.HIGH, "Untrusted content is written to an HTML sink.", "CWE-79"),
-                (r"(?i)(password|secret|api[_-]?key|token)\s*=\s*['\"](?!.*(?:env|config))[^'\"]+['\"]", "SECRETS_EXPOSURE", Severity.CRITICAL, "A credential-like value is hardcoded in source.", "CWE-798"),
+                (r"(?i)(password|secret|api[_-]?key|token)\s*(?:=|:)\s*['\"]?(?!.*(?:env|config))[^'\"\s<]+['\"]?", "SECRETS_EXPOSURE", Severity.CRITICAL, "A credential-like value is hardcoded in source or configuration.", "CWE-798"),
+                (r"(?i)<(password|secret|api[_-]?key|token)>\s*[^<\s]+\s*</\1>", "SECRETS_EXPOSURE", Severity.CRITICAL, "A credential-like value is hardcoded in source or configuration.", "CWE-798"),
                 (r"(os\.system\s*\(|subprocess\.(?:run|Popen|call)\s*\(.*\+|child_process\.exec\s*\()", "COMMAND_INJECTION", Severity.CRITICAL, "External command execution uses potentially tainted input.", "CWE-78"),
             ]
             for number, line in enumerate(text.splitlines(), 1):
                 for pattern, category, severity, description, cwe in rules:
                     if re.search(pattern, line):
-                        classification = VulnerabilityClassifier().classify(Vulnerability(tenant_id=tenant_id, mnemonic="LOCAL", application=app_name, repository=str(root), title=category.replace("_", " "), category=category, severity=severity, cwe=cwe))
-                        findings.append(Vulnerability(tenant_id=tenant_id, mnemonic="LOCAL", application=app_name, repository=str(root), title=f"{category.replace('_', ' ').title()} in {path.name}", category=category, severity=severity, cwe=cwe, cvss=classification.risk_score, description=description, file_name=str(path.relative_to(root)), line_number=number, business_impact="May expose customer data or compromise application integrity.", technical_impact=description, risk_score=classification.risk_score))
+                        classification = VulnerabilityClassifier().classify(Vulnerability(tenant_id=tenant_id, mnemonic=mnemonic, application=app_name, repository=str(root), title=category.replace("_", " "), category=category, severity=severity, cwe=cwe))
+                        findings.append(Vulnerability(tenant_id=tenant_id, mnemonic=mnemonic, application=app_name, repository=str(root), title=f"{category.replace('_', ' ').title()} in {path.name}", category=category, severity=severity, cwe=cwe, cvss=classification.risk_score, description=description, file_name=str(path.relative_to(root)), line_number=number, business_impact="May expose customer data or compromise application integrity.", technical_impact=description, risk_score=classification.risk_score))
                         break
         return findings
+
+    def _scan_files(self, root: Path):
+        """Yield only bounded, security-relevant text files from a repository."""
+        yielded = 0
+        for current, directories, filenames in os.walk(root, topdown=True):
+            directories[:] = sorted(directory for directory in directories if directory not in _SKIP)
+            for filename in sorted(filenames):
+                path = Path(current) / filename
+                if path.name.lower() not in _SPECIAL_FILES and path.suffix.lower() not in _EXTENSIONS:
+                    continue
+                try:
+                    if path.stat().st_size > _MAX_SCAN_FILE_BYTES:
+                        continue
+                except OSError:
+                    continue
+                yield path
+                yielded += 1
+                if yielded >= _MAX_SCAN_FILES:
+                    return
 
     def generate_fix(self, finding: Vulnerability, repo_path: str) -> RemediationRecord:
         path = Path(repo_path).resolve() / (finding.file_name or "")
@@ -124,9 +157,18 @@ class LocalSecurityMvp:
         elif finding.category == "XSS":
             fixed = original.replace("innerHTML", "textContent")
         elif finding.category == "SECRETS_EXPOSURE":
-            fixed = re.sub(r"(['\"])[^'\"]+\1", "os.environ.get('SECRET_NAME', '')", original, count=1)
+            fixed = re.sub(
+                r"(?i)((?:['\"])?(?:password|secret|api[_-]?key|token)(?:['\"])?\s*(?:=|:)\s*)(['\"])[^'\"]+\2",
+                r"\1os.environ.get('SECRET_NAME', '')",
+                original,
+            )
         elif finding.category == "COMMAND_INJECTION":
             fixed = original.replace("os.system", "subprocess.run")
+        if path.suffix.lower() == ".py" and fixed != original:
+            try:
+                ast.parse(fixed, filename=str(path))
+            except SyntaxError:
+                fixed = original
         record = RemediationRecord(uuid4(), finding.id, original, fixed, "Use parameterized APIs, trusted encoders, environment-backed secrets, or allow-listed process arguments.", finding.tenant_id, finding.cwe, "MEDIUM")
         self.data.remediations[record.id] = record
         self._save("remediation", record.id, self._remediation_payload(record))
@@ -140,14 +182,14 @@ class LocalSecurityMvp:
         if not (root / ".git").exists():
             raise ValueError("Repository is not a Git working tree")
         branch = f"security/{finding.cwe or finding.category}"
-        result = subprocess.run(["git", "-C", str(root), "switch", "-c", branch], capture_output=True, text=True, check=False)
+        result = subprocess.run(["git", "-C", str(root), "switch", "-c", branch], capture_output=True, text=True, timeout=30, check=False)
         if result.returncode != 0 and "already exists" not in result.stderr:
             raise ValueError(result.stderr.strip() or "Unable to create Git branch")
         if finding.file_name and remediation.fixed_code != remediation.original_code:
             target = root / finding.file_name
             target.write_text(remediation.fixed_code, encoding="utf-8")
-            subprocess.run(["git", "-C", str(root), "add", str(finding.file_name)], check=False)
-            subprocess.run(["git", "-C", str(root), "commit", "-m", f"Security fix: {finding.title}"], capture_output=True, text=True, check=False)
+            subprocess.run(["git", "-C", str(root), "add", str(finding.file_name)], timeout=30, check=False)
+            subprocess.run(["git", "-C", str(root), "commit", "-m", f"Security fix: {finding.title}"], capture_output=True, text=True, timeout=30, check=False)
         item = {"id": uuid4(), "tenant_id": finding.tenant_id, "finding_id": finding.id, "branch_name": branch, "commit_message": f"Security Remediation: {finding.title}", "status": "CREATED", "files_changed": [finding.file_name] if finding.file_name else []}
         self.data.branches[finding.id] = item
         self._save("branch", item["id"], item)

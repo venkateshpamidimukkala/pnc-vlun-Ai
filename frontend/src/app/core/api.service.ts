@@ -1,12 +1,16 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
-import { Observable, shareReplay, tap, timeout } from 'rxjs';
+import { Observable, filter, shareReplay, switchMap, take, tap, timeout, timer, throwError } from 'rxjs';
 
 export interface Vulnerability { id: string; tenant_id: string; mnemonic: string; application: string; repository: string; title: string; category: string; severity: string; status: string; cve?: string; cwe?: string; cvss?: number; ai_confidence?: string; created_at?: string; file_name?: string; line_number?: number; description?: string; risk_score?: number; }
 export interface MvpScan { scan_id: string; application: { id: string; name: string; repo_path: string; total_vulnerabilities: number; critical_issues: number }; findings: Vulnerability[]; scanner: string; status: string; }
+interface BackgroundJob { job_id: string; scan_id?: string; status: string; result?: MvpScan; error?: string; }
 export interface MvpFix { id: string; finding_id: string; original_code: string; fixed_code: string; explanation: string; status: string; }
 export interface DashboardMetrics { total: number; critical: number; high: number; medium: number; low: number; open: number; remediated: number; risk_reduction_percent: number; ai_success_rate_percent: number; applications_scanned?: number; remediations_generated?: number; jira_tickets_created?: number; pull_requests_generated?: number; branches_created?: number; security_score?: number; }
 export interface MvpApplication { id: string; name: string; repo_path: string; technology_stack: string[]; total_vulnerabilities: number; critical_issues: number; last_scan_date: string; }
+export interface ApplicationInventoryRepository { name: string; total_findings: number; critical_findings: number; }
+export interface ApplicationInventoryApplication { name: string; repo_path: string; total_findings: number; critical_findings: number; repositories: ApplicationInventoryRepository[]; }
+export interface ApplicationInventoryGroup { mnemonic: string; total_findings: number; critical_findings: number; applications: ApplicationInventoryApplication[]; }
 export interface MvpRemediation { id: string; finding_id: string; original_code: string; fixed_code: string; explanation: string; cwe?: string; confidence: string; status: string; created_at: string; }
 export interface MvpRecord { id: string; ticket_number?: string; pr_number?: string; branch_name?: string; summary?: string; title?: string; vulnerability_pattern?: string; description?: string; cwe?: string; status: string; application?: string; repository?: string; files_changed?: string[]; created_date?: string; }
 export interface RemediationResponse { workflow_id: string; status: string; matched_vulnerabilities: number; branch_pattern: string; confidence: string; next_step: string; }
@@ -14,6 +18,7 @@ export interface ApprovalItem { id: string; mnemonic: string; application: strin
 export interface CopilotResponse { answer: string; evidence: string[]; confidence: string; }
 export interface ApprovalDecisionResponse extends ApprovalItem { }
 export interface EngineWorkflow { workflow_id: string; tenant_id: string; requested_by: string; project: string; repository_path: string; status: string; created_at: string; finding_ids: string[]; evidence: Record<string, unknown>; }
+export interface WorkflowEvidence { status?: string; [key: string]: unknown; }
 
 @Injectable({providedIn:'root'})
 export class ApiService {
@@ -35,12 +40,16 @@ export class ApiService {
   engineIntegrations(): Observable<{ provider: string; enabled: boolean; reason: string }[]> { if (!this.integrationsCache) this.integrationsCache = this.http.get<{ provider: string; enabled: boolean; reason: string }[]>(`${this.baseUrl}/engine/integrations`).pipe(shareReplay({bufferSize: 1, refCount: false})); return this.integrationsCache; }
   invalidateVulnerabilities(): void { this.vulnerabilityCache.clear(); }
   invalidateWorkflows(): void { this.workflowsCache = undefined; }
-  scanRepository(repository_path: string): Observable<MvpScan> { return this.http.post<MvpScan>(`${this.baseUrl}/mvp/scans`, { repository_path }).pipe(tap(() => this.invalidateVulnerabilities())); }
+  private waitForScan(job: Observable<BackgroundJob>): Observable<MvpScan> { return job.pipe(switchMap(initial => timer(0, 400).pipe(switchMap(tick => tick === 0 ? [initial] : this.http.get<BackgroundJob>(`${this.baseUrl}/mvp/jobs/${initial.job_id}`)), filter(current => current.status === 'COMPLETED' || current.status === 'FAILED'), take(1), switchMap(current => current.status === 'FAILED' ? throwError(() => new Error(current.error || 'Scan failed')) : [current.result!]))), tap(() => this.invalidateVulnerabilities())); }
+  scanRepository(repository_path: string): Observable<MvpScan> { return this.waitForScan(this.http.post<BackgroundJob>(`${this.baseUrl}/mvp/scans`, { repository_path })); }
+  scanGitRepository(repository_url: string): Observable<MvpScan> { return this.waitForScan(this.http.post<BackgroundJob>(`${this.baseUrl}/mvp/scans/git`, { repository_url })); }
+  scanUploadedRepository(file: File): Observable<MvpScan> { const body = new FormData(); body.append('file', file, file.name); return this.waitForScan(this.http.post<BackgroundJob>(`${this.baseUrl}/mvp/scans/upload`, body)); }
   generateFix(id: string, repository_path: string): Observable<MvpFix> { return this.http.post<MvpFix>(`${this.baseUrl}/mvp/vulnerabilities/${id}/fix`, { repository_path }); }
   createJira(id: string): Observable<Record<string, unknown>> { return this.http.post<Record<string, unknown>>(`${this.baseUrl}/mvp/vulnerabilities/${id}/jira`, {}); }
   createBranch(id: string, repository_path: string): Observable<Record<string, unknown>> { return this.http.post<Record<string, unknown>>(`${this.baseUrl}/mvp/vulnerabilities/${id}/branch`, { repository_path }); }
   createPullRequest(id: string): Observable<Record<string, unknown>> { return this.http.post<Record<string, unknown>>(`${this.baseUrl}/mvp/vulnerabilities/${id}/pull-request`, {}); }
   applications(): Observable<MvpApplication[]> { return this.http.get<MvpApplication[]>(`${this.baseUrl}/mvp/applications`); }
+  applicationInventory(): Observable<ApplicationInventoryGroup[]> { return this.http.get<ApplicationInventoryGroup[]>(`${this.baseUrl}/mvp/application-inventory`); }
   remediations(): Observable<MvpRemediation[]> { return this.http.get<MvpRemediation[]>(`${this.baseUrl}/mvp/remediations`); }
   jiraTickets(): Observable<MvpRecord[]> { return this.http.get<MvpRecord[]>(`${this.baseUrl}/mvp/jira`); }
   branches(): Observable<MvpRecord[]> { return this.http.get<MvpRecord[]>(`${this.baseUrl}/mvp/branches`); }

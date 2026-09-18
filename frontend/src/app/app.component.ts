@@ -2,18 +2,59 @@ import { Component, inject } from '@angular/core';
 import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { AuthService } from './core/auth.service';
 
-@Component({ selector: 'app-root', standalone: true, imports: [RouterOutlet, RouterLink, RouterLinkActive], template: `
+@Component({
+  selector: 'app-root',
+  standalone: true,
+  imports: [RouterOutlet, RouterLink, RouterLinkActive],
+  template: `
   @if (!isLogin()) {
-    <header class="topbar"><div class="brand"><span class="brand-mark">PNC</span><div><strong>Vuln AI</strong><small>Enterprise Security Operations</small></div></div><div class="top-actions"><span class="environment">LOCAL DEVELOPMENT</span><span class="avatar">{{ initials }}</span><button class="logout" (click)="logout()">Sign out</button></div></header>
-    <div class="shell" [class.collapsed]="collapsed"><nav><button class="collapse" (click)="collapsed=!collapsed" aria-label="Toggle navigation"><span class="material-icons">menu</span></button><p class="nav-label">Dashboard</p><a routerLink="/execute" routerLinkActive="active"><span class="material-icons">folder_scan</span><span>Scan code base</span></a><a routerLink="/executive" routerLinkActive="active"><span class="material-icons">dashboard</span><span>Executive</span></a><a routerLink="/security" routerLinkActive="active"><span class="material-icons">shield</span><span>Security</span></a><a routerLink="/developer" routerLinkActive="active"><span class="material-icons">code</span><span>Developer</span></a><p class="nav-label">Management</p><a routerLink="/applications" routerLinkActive="active"><span class="material-icons">apps</span><span>Applications</span></a><a routerLink="/vulnerabilities" routerLinkActive="active"><span class="material-icons">bug_report</span><span>Vulnerabilities</span></a><a routerLink="/remediation" routerLinkActive="active"><span class="material-icons">build</span><span>Remediation</span></a><a routerLink="/pull-requests" routerLinkActive="active"><span class="material-icons">merge</span><span>Pull requests</span></a><a routerLink="/test-case-validation" routerLinkActive="active"><span class="material-icons">fact_check</span><span>Test case validation</span></a><p class="nav-label">Security</p><a routerLink="/security-gateway" routerLinkActive="active"><span class="material-icons">security</span><span>Security gateway</span></a><a routerLink="/audit-log" routerLinkActive="active"><span class="material-icons">history</span><span>Audit log</span></a><p class="nav-label">History</p><a routerLink="/pr-history" routerLinkActive="active"><span class="material-icons">history_toggle_off</span><span>PR history</span></a><a routerLink="/knowledge-repo" routerLinkActive="active"><span class="material-icons">auto_stories</span><span>Knowledge repo</span></a><div class="nav-footer"><span class="status-dot"></span><span>Platform healthy</span></div></nav><main><router-outlet /></main></div>
+    <header class="topbar">
+      <a class="brand" routerLink="/dashboard" aria-label="Vuln AI dashboard">
+        <span class="brand-mark">PNC</span>
+        <strong>Vuln AI</strong>
+      </a>
+      <label class="portal-search">
+        <span class="material-icons" aria-hidden="true">search</span>
+        <input type="search" placeholder="Search vulnerability, repository..." aria-label="Search vulnerability or repository" />
+      </label>
+      <div class="top-actions">
+        <span class="environment">DEV</span>
+        <span class="avatar">{{ initials }}</span>
+        <button class="logout" (click)="logout()" aria-label="Sign out">Sign Out</button>
+      </div>
+    </header>
+    <div class="shell" [class.collapsed]="collapsed">
+      <nav class="sidebar" aria-label="Primary navigation">
+        <button class="nav-toggle" type="button" (click)="collapsed = !collapsed" [attr.aria-expanded]="!collapsed" aria-controls="primary-navigation">
+          <span class="material-icons" aria-hidden="true">{{ collapsed ? 'menu' : 'close' }}</span>
+          <span class="nav-toggle-label">{{ collapsed ? 'Expand navigation' : 'Collapse navigation' }}</span>
+        </button>
+        <div id="primary-navigation" class="nav-links">
+        <a routerLink="/dashboard" routerLinkActive="active" title="Dashboard"><span class="material-icons">dashboard</span><span>Dashboard</span></a>
+        <a routerLink="/executive" routerLinkActive="active" title="Executive"><span class="material-icons">analytics</span><span>Executive</span></a>
+        <a routerLink="/execute" routerLinkActive="active" title="Scan Code Base"><span class="material-icons">folder_scan</span><span>Scan Code Base</span></a>
+        <a routerLink="/security" routerLinkActive="active" title="Security"><span class="material-icons">shield</span><span>Security</span></a>
+        <a routerLink="/developer" routerLinkActive="active" title="Developer"><span class="material-icons">code</span><span>Developer</span></a>
+        <p class="nav-label">Management</p>
+        <a routerLink="/applications" routerLinkActive="active" title="Applications"><span class="material-icons">apps</span><span>Applications</span></a>
+        <a routerLink="/vulnerabilities" routerLinkActive="active" title="Vulnerabilities"><span class="material-icons">bug_report</span><span>Vulnerabilities</span></a>
+        <a routerLink="/remediation" routerLinkActive="active" title="Remediation"><span class="material-icons">build</span><span>Remediation</span></a>
+        <a routerLink="/pull-requests" routerLinkActive="active" title="Pull Requests"><span class="material-icons">merge</span><span>Pull Requests</span></a>
+        <a routerLink="/test-case-validation" routerLinkActive="active" title="Test Case Validation"><span class="material-icons">fact_check</span><span>Test Case Validation</span></a>
+        </div>
+      </nav>
+      <main><router-outlet /></main>
+    </div>
     <footer>PNC Vuln AI <span>Secure by design · © 2026 PNC</span></footer>
   } @else { <router-outlet /> }
-`, styleUrl: './app.component.scss', styles: [`.collapse{align-self:flex-end;padding:.35rem;color:var(--navy);background:transparent}.material-icons{vertical-align:middle;font-size:18px}nav a{display:flex;gap:.7rem;align-items:center}.collapsed nav{flex-basis:70px}.collapsed nav a span:last-child,.collapsed .nav-label,.collapsed .nav-footer span:last-child{display:none}.collapsed nav a{justify-content:center;padding-left:.5rem;padding-right:.5rem}`] })
+`,
+  styleUrl: './app.component.scss'
+})
 export class AppComponent {
   private readonly auth = inject(AuthService);
+  collapsed = false;
   get initials(): string { return (this.auth.user()?.name || 'User').split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase(); }
   constructor(private readonly router: Router) {}
-  collapsed = false;
   isLogin(): boolean { return this.router.url.startsWith('/login') || this.router.url.startsWith('/register'); }
   logout(): void { this.auth.logout(); this.router.navigateByUrl('/login'); }
 }
