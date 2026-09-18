@@ -1,0 +1,105 @@
+.inventory-group {
+  padding: 1.25rem;
+  margin-top: 1rem;
+  background: #fbfcfe;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.inventory-group:first-of-type { margin-top: 0; }
+
+.inventory-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.inventory-group > .inventory-heading {
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.inventory-heading h3 {
+  margin: .55rem 0 0;
+  color: var(--navy);
+  font-size: 1.15rem;
+  letter-spacing: -.02em;
+}
+
+.inventory-summary {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: .65rem;
+  color: var(--muted);
+  font-size: .78rem;
+  line-height: 1.5;
+  text-align: right;
+}
+
+.inventory-summary .btn { flex: 0 0 auto; }
+
+.inventory-application {
+  padding: 1rem 0 0 1rem;
+  margin-top: 1rem;
+  border-left: 3px solid #d9e5ef;
+}
+
+.inventory-application > .inventory-heading { align-items: flex-start; }
+
+.inventory-application strong {
+  display: block;
+  color: var(--ink);
+  font-size: .98rem;
+}
+
+.inventory-application .muted,
+.inventory-repository .muted {
+  display: block;
+  margin-top: .35rem;
+  color: var(--muted);
+  font-size: .76rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.inventory-repository {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: .85rem 0 .85rem 1rem;
+  margin-top: .75rem;
+  border-top: 1px solid var(--line);
+}
+
+.inventory-repository strong {
+  display: block;
+  color: var(--navy-2);
+  font-size: .86rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.inventory-repository .btn,
+.inventory-summary .btn {
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .inventory-group { padding: 1rem; }
+  .inventory-heading,
+  .inventory-application > .inventory-heading,
+  .inventory-repository {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .inventory-summary {
+    justify-content: flex-start;
+    text-align: left;
+  }
+  .inventory-application { padding-left: .75rem; }
+  .inventory-repository { padding-left: .75rem; }
+}
