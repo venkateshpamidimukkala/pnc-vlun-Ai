@@ -1,9 +1,13 @@
 from collections.abc import Sequence
 from typing import Any
 from uuid import uuid4
+import logging
 
 from app.agent_graph import RemediationState, build_graph
 from app.main_types import BulkRemediationInput, VulnerabilityRecord
+from app.performance import timed_function, timed
+
+logger = logging.getLogger("pnc.workflow")
 
 
 class RemediationWorkflow:
@@ -30,10 +34,13 @@ class RemediationWorkflow:
     def graph_definition(self) -> dict[str, Any]:
         return {"nodes": ["discover", "classify", "root_cause", "remediate", "validate", "pr", "approve", "merge"], "approval_gate": "approve"}
 
+    @timed_function("workflow.execute")
     def execute(self, findings: Sequence[VulnerabilityRecord]) -> RemediationState:
         """Run classification, remediation planning, and validation before approval."""
         rows = list(findings)
-        return build_graph(
-            RemediationState(workflow_id=uuid4(), vulnerability_ids=[row.id for row in rows]),
-            findings=rows,
-        )
+        logger.info("Workflow execution started: findings=%d", len(rows))
+        state = RemediationState(workflow_id=uuid4(), vulnerability_ids=[row.id for row in rows])
+        with timed("workflow.graph", detail=f"{len(rows)} findings"):
+            result = build_graph(state, findings=rows)
+        logger.info("Workflow execution completed: workflow=%s status=%s", result.workflow_id, result.status)
+        return result

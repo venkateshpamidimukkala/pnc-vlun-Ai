@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import inspect
+import sys
 from collections import defaultdict
 from functools import wraps
 from contextlib import contextmanager
@@ -17,6 +18,33 @@ logger = logging.getLogger("pnc.performance")
 _current_timeline: ContextVar["TimingTimeline | None"] = ContextVar("pnc_timeline", default=None)
 _aggregate_lock = __import__("threading").RLock()
 _aggregate_totals: dict[str, dict[str, float | int]] = defaultdict(lambda: {"calls": 0, "total_ms": 0.0, "max_ms": 0.0})
+
+
+class _StructuredFormatter(logging.Formatter):
+    """Human-readable structured records shared by API and worker processes."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        timestamp = self.formatTime(record, "%Y-%m-%d %H:%M:%S")
+        message = record.getMessage()
+        return f"{timestamp}\n[{record.threadName}]\n[{record.name}]\n{record.levelname}\n{message}"
+
+
+def configure_logging() -> None:
+    """Install the application logger once without replacing Uvicorn handlers."""
+    root = logging.getLogger()
+    if getattr(root, "_pnc_structured_logging", False):
+        return
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(_StructuredFormatter())
+    root.handlers.clear()
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.error").setLevel(logging.INFO)
+    root._pnc_structured_logging = True  # type: ignore[attr-defined]
+
+
+configure_logging()
 
 
 class TimingTimeline:
@@ -72,8 +100,7 @@ class TimingTimeline:
 def timed(operation: str, *, detail: str | None = None, timeline: TimingTimeline | None = None) -> Iterator[None]:
     started = perf_counter()
     started_at = datetime.now().strftime("%H:%M:%S")
-    logger.info("--------------------------------------------------")
-    logger.info("STEP %s START: %s%s", operation, started_at, f" - {detail}" if detail else "")
+    logger.info("[START] %s%s", operation, f" - {detail}" if detail else "")
     try:
         yield
     finally:
@@ -89,9 +116,8 @@ def timed(operation: str, *, detail: str | None = None, timeline: TimingTimeline
             aggregate["calls"] = int(aggregate["calls"]) + 1
             aggregate["total_ms"] = float(aggregate["total_ms"]) + duration_ms
             aggregate["max_ms"] = max(float(aggregate["max_ms"]), duration_ms)
-        logger.info("STEP %s END: %s", operation, ended_at)
-        logger.info("DURATION: %.2f sec", duration_ms / 1000)
-        logger.info("--------------------------------------------------")
+        logger.info("[END] %s at %s", operation, ended_at)
+        logger.info("Duration: %.2f sec", duration_ms / 1000)
 
 
 def timed_function(operation: str | None = None):

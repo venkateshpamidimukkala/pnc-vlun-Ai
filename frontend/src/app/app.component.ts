@@ -9,9 +9,9 @@ import { AuthService } from './core/auth.service';
   template: `
   @if (!isLogin()) {
     <header class="topbar">
-      <a class="brand" routerLink="/dashboard" aria-label="Vuln AI dashboard">
+      <a class="brand" routerLink="/dashboard" aria-label="Ojasin AI dashboard">
         <span class="brand-mark">PNC</span>
-        <strong>Vuln AI</strong>
+        <strong>Ojasin AI</strong>
       </a>
       <label class="portal-search">
         <span class="material-icons" aria-hidden="true">search</span>
@@ -51,7 +51,7 @@ import { AuthService } from './core/auth.service';
       </nav>
       <main><router-outlet /></main>
     </div>
-    <footer>PNC Vuln AI <span>Secure by design · © 2026 PNC</span></footer>
+    <footer>Ojasin AI <span>Secure by design · © 2026 PNC</span></footer>
   } @else { <router-outlet /> }
 `,
   styleUrl: './app.component.scss'

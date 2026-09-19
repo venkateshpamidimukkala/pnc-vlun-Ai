@@ -26,7 +26,7 @@ from app.settings import settings
 from app.workflow import RemediationWorkflow
 from app.mvp import LocalSecurityMvp
 from app import jobs
-from app.performance import TimingTimeline, activate_timeline, current_timeline, performance_report, reset_timeline, timed
+from app.performance import TimingTimeline, activate_timeline, current_timeline, performance_report, reset_timeline, timed, timed_function
 from app.cache import read_cache
 from app.llm import generate_answer_async
 
@@ -136,7 +136,7 @@ async def request_timing(request: Request, call_next):
         response_size = response.headers.get("content-length", "unknown")
         response.headers["X-Process-Time-Ms"] = f"{duration:.2f}"
         response.headers["X-Request-ID"] = timeline.correlation_id
-        logger.log(logging.WARNING if duration >= 1000 else logging.INFO, "[PERF] %s %s %s status=%s start=%s end=%s duration=%.2f ms response_size=%s", timeline.correlation_id, request.method, request.url.path, response.status_code, started_at, ended_at, duration, response_size)
+        logger.log(logging.WARNING if duration >= 1000 else logging.INFO, "Endpoint: %s %s\nStatus: %s\nDuration: %.2f sec\nRequest ID: %s\nResponse Size: %s", request.method, request.url.path, response.status_code, duration / 1000, timeline.correlation_id, response_size)
         return response
     finally:
         reset_timeline(token)
@@ -248,19 +248,34 @@ def mvp_scan(payload: LocalScanRequest, principal: Principal = Depends(require_p
     if not root.exists() or not root.is_dir():
         raise HTTPException(status_code=400, detail="Repository path must be an existing directory visible to the API server")
     read_cache.invalidate(contains=str(principal.tenant_id))
-    job_id = jobs.submit("LOCAL_SCAN", principal.tenant_id, _scan_directory, root, principal, with_progress=True)
+    job_id = jobs.submit("LOCAL_SCAN", principal.tenant_id, _scan_directory, root, principal, settings.scan_always_mock_in_demo and demo_mode, with_progress=True)
     return {"scan_id": str(job_id), "job_id": str(job_id), "scanner": "Custom Local SAST Scanner", "status": "QUEUED"}
 
 
-def _scan_directory(root: Path, principal: Principal, progress=None) -> dict:
+@app.post("/api/v1/mvp/scans/mock", status_code=status.HTTP_202_ACCEPTED, tags=["mvp"])
+def mvp_mock_scan(payload: LocalScanRequest, principal: Principal = Depends(require_principal)) -> dict:
+    """Queue a deterministic mock scan for the local/demo walkthrough."""
+    if not demo_mode:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Mock scans are available only in demo mode")
+    repository_path = payload.repository_path.strip()
+    root = Path(repository_path).expanduser()
+    if not root.exists() or not root.is_dir():
+        raise HTTPException(status_code=400, detail="Repository path must be an existing directory visible to the API server")
+    read_cache.invalidate(contains=str(principal.tenant_id))
+    job_id = jobs.submit("MOCK_SCAN", principal.tenant_id, _scan_directory, root, principal, True, with_progress=True)
+    return {"scan_id": str(job_id), "job_id": str(job_id), "scanner": "Deterministic Demo Mock Scanner", "status": "QUEUED"}
+
+
+@timed_function("api.scan_directory_job")
+def _scan_directory(root: Path, principal: Principal, force_mock: bool = False, progress=None) -> dict:
     try:
         with timed("scan.directory_job"):
-            application, findings = mvp.scan(principal.tenant_id, str(root), repository, progress=progress)
+            application, findings = mvp.scan(principal.tenant_id, str(root), repository, progress=progress, force_mock=force_mock)
     except (OSError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     scan_id = uuid4()
     audit_repository.append(AuditEvent(event_type="REPOSITORY_SCAN", aggregate_id=scan_id, actor_id=principal.subject, tenant_id=principal.tenant_id))
-    return {"scan_id": str(scan_id), "application": application, "findings": findings, "scanner": "Custom Local SAST Scanner", "performance": current_timeline().report() if current_timeline() else {}, "status": "COMPLETED"}
+    return {"scan_id": str(scan_id), "application": application, "findings": findings, "scanner": "Deterministic Demo Mock Scanner" if force_mock else "Custom Local SAST Scanner", "scan_mode": application.get("scan_mode", "LIVE"), "scan_metadata": application.get("scan_metadata", {}), "performance": current_timeline().report() if current_timeline() else {}, "status": "COMPLETED"}
 
 
 @app.get("/api/v1/mvp/jobs/{job_id}", tags=["mvp"])
@@ -283,6 +298,7 @@ def mvp_git_scan(payload: GitScanRequest, principal: Principal = Depends(require
     return {"scan_id": str(job_id), "job_id": str(job_id), "scanner": "Custom Local SAST Scanner", "status": "QUEUED"}
 
 
+@timed_function("api.git_scan_job")
 def _git_scan_job(repository_url: str, principal: Principal) -> dict:
     workspace = Path(tempfile.mkdtemp(prefix="pnc-scan-"))
     try:
@@ -306,6 +322,7 @@ def mvp_upload_scan(file: UploadFile = File(...), principal: Principal = Depends
     return {"scan_id": str(job_id), "job_id": str(job_id), "scanner": "Custom Local SAST Scanner", "status": "QUEUED"}
 
 
+@timed_function("api.upload_scan_job")
 def _upload_scan_job(archive_bytes: bytes, principal: Principal) -> dict:
     workspace = Path(tempfile.mkdtemp(prefix="pnc-scan-"))
     try:
@@ -570,6 +587,7 @@ def create_engine_workflow(payload: EngineWorkflowRequest, principal: Principal 
     return {"job_id": str(job_id), "status": "QUEUED"}
 
 
+@timed_function("api.engine_workflow_job")
 def _create_engine_workflow_job(
     principal: Principal,
     project: str,

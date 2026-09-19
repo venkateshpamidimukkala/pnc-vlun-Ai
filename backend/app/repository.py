@@ -1,5 +1,6 @@
 from collections.abc import Iterable
 from uuid import UUID
+from app.performance import timed_function
 
 from app.domain import FindingStatus, Vulnerability
 
@@ -10,14 +11,18 @@ class VulnerabilityRepository:
     def __init__(self, initial: Iterable[Vulnerability] = ()):
         self._rows = list(initial)
 
+    @timed_function("repository.list")
     def list(self, tenant_id: UUID) -> list[Vulnerability]:
         return [row for row in self._rows if row.tenant_id == tenant_id]
 
+    @timed_function("repository.seed")
     def seed(self, row: Vulnerability) -> None:
         self._rows.append(row)
 
+    @timed_function("repository.seed_many")
     def seed_many(self, rows: Iterable[Vulnerability]) -> None:
         """Persist a scan batch without paying per-finding adapter overhead."""
+        rows = list(rows)
         self._rows.extend(rows)
 
     def count(self, tenant_id: UUID) -> int:

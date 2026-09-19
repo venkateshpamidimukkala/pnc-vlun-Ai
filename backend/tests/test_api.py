@@ -217,6 +217,38 @@ def test_local_scan_reports_custom_sast_scanner(tmp_path):
     assert result["findings"]
 
 
+def test_local_scan_uses_mock_findings_when_demo_time_budget_is_exceeded(tmp_path, monkeypatch):
+    (tmp_path / "large.py").write_text("print('repository work')\n", encoding="utf-8")
+    monkeypatch.setattr(app_module.settings, "scan_time_budget_seconds", 0.000001)
+    monkeypatch.setattr(app_module.settings, "scan_mock_fallback_enabled", True)
+    user = DEMO_USERS["analyst@pnc.local"]["user_id"]
+    client = TestClient(app)
+    result = completed_scan(client, client.post("/api/v1/mvp/scans", headers=headers(DEMO_TENANT_ID, user), json={"repository_path": str(tmp_path)}), headers(DEMO_TENANT_ID, user))
+    assert result["scan_mode"] == "MOCK_FALLBACK"
+    assert result["scan_metadata"]["files_analyzed_before_fallback"] == 0
+    assert len(result["findings"]) == 3
+
+
+def test_local_scan_can_always_use_mock_findings_in_demo_mode(tmp_path, monkeypatch):
+    (tmp_path / "clean.py").write_text("print('clean')\n", encoding="utf-8")
+    monkeypatch.setattr(app_module.settings, "scan_always_mock_in_demo", True)
+    user = DEMO_USERS["analyst@pnc.local"]["user_id"]
+    result = completed_scan(TestClient(app), TestClient(app).post("/api/v1/mvp/scans", headers=headers(DEMO_TENANT_ID, user), json={"repository_path": str(tmp_path)}), headers(DEMO_TENANT_ID, user))
+    assert result["scan_mode"] == "MOCK_DEMO"
+    assert result["scan_metadata"]["fallback_reason"] == "Explicit mock scan requested for demo data"
+    assert len(result["findings"]) == 3
+
+
+def test_dedicated_mock_scan_returns_persisted_deterministic_findings(tmp_path):
+    user = DEMO_USERS["analyst@pnc.local"]["user_id"]
+    client = TestClient(app)
+    result = completed_scan(client, client.post("/api/v1/mvp/scans/mock", headers=headers(DEMO_TENANT_ID, user), json={"repository_path": str(tmp_path)}), headers(DEMO_TENANT_ID, user))
+    assert result["scanner"] == "Deterministic Demo Mock Scanner"
+    assert result["scan_mode"] == "MOCK_DEMO"
+    assert len(result["findings"]) == 3
+    assert any(str(row.id) == result["findings"][0]["id"] for row in repository.list(DEMO_TENANT_ID))
+
+
 def test_local_scan_targets_security_relevant_formats_and_skips_unrelated_files(tmp_path):
     (tmp_path / "unsafe.py").write_text("os.system(user_input)\n", encoding="utf-8")
     (tmp_path / "unsafe.html").write_text("<script>document.write(user_input)</script>\n", encoding="utf-8")

@@ -58,6 +58,7 @@ def _store_answer(key: tuple[str, str, str, int, int], answer: str) -> None:
 def generate_answer(question: str, context: dict[str, Any]) -> str | None:
     """Return an Ollama answer, or None when the deterministic fallback is used."""
     provider = settings.ai_provider.lower().strip()
+    logger.info("Analyzing Copilot request\nPrompt Type: Copilot Question\nTokens: max=%s", settings.ai_max_tokens)
     if provider != "ollama":
         return None
 
@@ -93,6 +94,7 @@ def generate_answer(question: str, context: dict[str, Any]) -> str | None:
         response.raise_for_status()
         content = response.json().get("message", {}).get("content")
         answer = content.strip() if isinstance(content, str) and content.strip() else None
+        logger.info("LLM response received: provider=%s response_tokens=%s", provider, len(answer.split()) if answer else 0)
         if answer:
             _store_answer(key, answer)
         return answer

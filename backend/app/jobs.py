@@ -7,8 +7,12 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from threading import Lock
 from uuid import UUID, uuid4
+import logging
+from time import perf_counter
 
 from app.performance import TimingTimeline, activate_timeline, reset_timeline, timed
+
+logger = logging.getLogger("pnc.jobs")
 
 
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="pnc-job")
@@ -22,6 +26,8 @@ def _now() -> str:
 
 def submit(kind: str, tenant_id: UUID, task, *args, with_progress: bool = False) -> UUID:
     job_id = uuid4()
+    logger.info("Job %s queued: kind=%s", job_id, kind)
+    started_times: dict[UUID, float] = {}
     timeline = TimingTimeline(str(job_id))
     with _lock:
         _jobs[job_id] = {
@@ -44,13 +50,16 @@ def submit(kind: str, tenant_id: UUID, task, *args, with_progress: bool = False)
             discovered = int(progress.get("files_discovered", 0))
             scanned = int(progress.get("files_scanned", 0))
             progress["completion_percentage"] = round((scanned / discovered) * 100, 1) if discovered else 0.0
+            logger.info("Job: %s\nStatus: RUNNING\nPhase: %s\nProgress: %s/%s files\n%.1f%%", job_id, progress.get("phase", ""), scanned, discovered, progress["completion_percentage"])
 
     def run_task():
         token = activate_timeline(timeline)
+        started_times[job_id] = perf_counter()
         with _lock:
             _jobs[job_id]["status"] = "RUNNING"
             _jobs[job_id]["progress"]["phase"] = "Repository Loaded"
             _jobs[job_id]["started_at"] = _now()
+        logger.info("Job: %s\nStatus: RUNNING\nStarted Time: %s", job_id, _jobs[job_id]["started_at"])
         try:
             with timed(f"job.{kind}"):
                 return task(*args, update_progress) if with_progress else task(*args)
@@ -74,6 +83,8 @@ def submit(kind: str, tenant_id: UUID, task, *args, with_progress: bool = False)
             if job["status"] == "COMPLETED":
                 job["progress"]["completion_percentage"] = 100.0
             job["timeline"] = timeline.payload()
+            duration = perf_counter() - started_times.pop(job_id, perf_counter())
+            logger.info("Job: %s\nStatus: %s\nCompleted Time: %s\nDuration: %.2f sec", job_id, job["status"], job["completed_at"], duration)
 
     future.add_done_callback(complete)
     return job_id

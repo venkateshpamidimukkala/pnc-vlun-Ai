@@ -1,9 +1,13 @@
 """Database initialization for the local PostgreSQL demo environment."""
 from pathlib import Path
+import logging
 
 from sqlalchemy import text
 
 from app.persistence import engine
+from app.performance import timed_function
+
+logger = logging.getLogger("pnc.database")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_FILE = PROJECT_ROOT / "database" / "001_initial_schema.sql"
@@ -12,6 +16,7 @@ ENTERPRISE_FILE = PROJECT_ROOT / "database" / "003_enterprise_capabilities.sql"
 MVP_FILE = PROJECT_ROOT / "database" / "004_mvp_read_models.sql"
 
 
+@timed_function("database.initialize_demo_database")
 def initialize_demo_database() -> None:
     """Create the schema and deterministic demo data on first demo startup."""
     try:
@@ -24,6 +29,7 @@ def initialize_demo_database() -> None:
             connection.exec_driver_sql(ENTERPRISE_FILE.read_text(encoding="utf-8"))
             connection.exec_driver_sql(MVP_FILE.read_text(encoding="utf-8"))
             connection.exec_driver_sql(SEED_FILE.read_text(encoding="utf-8"))
+            logger.info("Demo database schema and seed data initialized")
     except Exception as exc:
         raise RuntimeError(
             "PostgreSQL is required for APP_ENV=demo. Start PostgreSQL with database "

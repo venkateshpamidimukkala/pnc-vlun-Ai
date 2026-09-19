@@ -1,0 +1,404 @@
+PNCAI PROJECT INFORMATION
+==========================
+
+Project Name
+------------
+PNC Vuln AI / PNCAI - Resiliency Studio
+
+Project Type
+------------
+Enterprise vulnerability detection, security analysis, AI-assisted classification,
+governed remediation, validation, approval, audit, and delivery platform.
+
+Executive Summary
+-----------------
+PNCAI is a security and resiliency platform that helps teams discover software
+vulnerabilities earlier, understand their business impact, plan remediation, and
+govern changes before delivery. The platform combines a modern Angular dashboard,
+a FastAPI backend, deterministic local scanning, background job processing,
+tenant-scoped access control, AI-assisted guidance, remediation workflows,
+approval gates, persistence, dashboard metrics, and audit events.
+
+The completed project provides a working vertical slice for a reliable,
+credential-free demonstration. It demonstrates how a vulnerability can move from
+discovery to classification, evidence review, remediation planning, approval,
+and audit reporting. External side effects such as modifying arbitrary
+repositories, creating Jira tickets, opening pull requests, or calling Azure
+OpenAI are intentionally protected behind credentialed integration ports and are
+not claimed as active in the local demo.
+
+
+Business Problem
+----------------
+Organizations frequently discover security and resiliency problems late in the
+software delivery lifecycle. Security reviews, architecture reviews, code
+analysis, remediation planning, approvals, and compliance evidence are often
+performed in separate tools and by separate teams.
+
+This creates several business problems:
+
+1. Late discovery increases remediation cost.
+   Vulnerabilities found near release or after deployment require emergency work,
+   release delays, rework, and additional coordination.
+
+2. Security information is fragmented.
+   Findings, code evidence, application ownership, architecture context,
+   remediation status, approval decisions, and audit records may be stored in
+   different systems. This makes it difficult to understand the complete risk.
+
+3. Findings are difficult to prioritize.
+   Security teams need consistent severity, classification, evidence, application,
+   repository, and tenant context in order to focus on the highest-value work.
+
+4. AI recommendations require governance.
+   AI can help explain findings and suggest next steps, but organizations need
+   deterministic evidence, human review, tenant isolation, traceability, and an
+   approval process before accepting a change.
+
+5. Remediation is not always connected to the original evidence.
+   If a fix, approval, validation result, or pull request cannot be traced back to
+   the finding that caused it, auditability and accountability are weakened.
+
+6. Demo and development environments may depend on external services.
+   A demonstration should be repeatable even when external AI providers,
+   scanners, Jira, Git hosting, or secret managers are unavailable.
+
+
+Business Problem Statement
+--------------------------
+Security, resiliency, and AI governance reviews are often fragmented and occur
+too late in the delivery lifecycle, when changes are costly and risky. Teams
+need one governed workspace that can discover vulnerabilities, preserve evidence,
+provide consistent classification and guidance, route remediation through human
+approval, and maintain tenant-scoped audit history from discovery through delivery.
+
+
+Proposed Solution
+-----------------
+PNCAI provides a unified vulnerability and resiliency workflow:
+
+1. Authenticate the user and establish tenant and role context.
+2. Import findings or start a local, Git, or deterministic demo scan.
+3. Run scanning as a background job instead of blocking the HTTP request.
+4. Report job status, progress, phases, file counts, findings, timing, and
+   bottleneck information through polling.
+5. Apply deterministic security rules and classification to produce repeatable
+   findings and evidence.
+6. Display findings in the Angular dashboard with severity, status, application,
+   repository, and filtering context.
+7. Use the AI Engine and Copilot for grounded classification, explanation,
+   remediation planning, validation planning, and knowledge evidence.
+8. Request bulk remediation for selected findings.
+9. Move matched findings into review and create an approval-gated workflow.
+10. Allow authorized security reviewers or platform administrators to approve or
+    reject the proposed remediation.
+11. Persist the resulting records and emit audit events for important mutations.
+12. Expose dashboard metrics and a performance report for operational visibility.
+
+
+What We Provided / Completed
+----------------------------
+
+Frontend
+--------
+- Angular 22 application shell and dashboard vertical slice.
+- Angular Material components and RxJS-based frontend behavior.
+- Scan code base workflow connected to the AI Engine workflow API.
+- Finding inventory and dashboard views.
+- Remediation and approval workflow views.
+- Audit and operational information suitable for a hackathon demonstration.
+- Frontend development server on http://localhost:4200.
+
+Backend
+-------
+- FastAPI REST API running on http://localhost:8000.
+- OpenAPI documentation available at http://localhost:8000/docs.
+- Health endpoint at /health and readiness endpoint at /ready.
+- Pydantic request and response models.
+- Python 3.13 project configuration.
+- SQLAlchemy and PostgreSQL support for persistent deployments.
+- In-memory repository support for the dependency-free local walkthrough.
+
+Scanning
+--------
+- Local repository scan endpoint: POST /api/v1/mvp/scans.
+- Dedicated deterministic demo endpoint: POST /api/v1/mvp/scans/mock.
+- Git scan endpoint: POST /api/v1/mvp/scans/git.
+- Scan import endpoint: POST /api/v1/scans/import.
+- Background job status endpoint: GET /api/v1/mvp/jobs/{job_id}.
+- Short polling alias: GET /jobs/{job_id}.
+- Deterministic findings for repeatable demonstrations.
+- Allowlist-based scan policy for Python, TypeScript, HTML, and named project or
+  configuration files.
+- Dependency, build, VCS, cache, and unrelated directories are pruned.
+- File-size and scan-file-count limits protect the scan process.
+- Incremental scan support reuses process-local hash and finding information for
+  unchanged files.
+- Prioritized file analysis and a configurable worker pool.
+
+AI and Workflow Engine
+----------------------
+- Provider-neutral AI Engine workflow at POST /api/v1/engine/workflows.
+- Agent catalog at GET /api/v1/engine/agents.
+- Integration catalog at GET /api/v1/engine/integrations.
+- Workflow polling at GET /api/v1/engine/workflow-jobs/{job_id}.
+- Workflow listing and detail endpoints.
+- Deterministic classification and remediation planning.
+- Validation and test planning.
+- Git and pull-request planning contracts.
+- Approval routing and knowledge evidence.
+- Local deterministic AI fallback is available.
+- Optional Ollama support is configured through the AI provider settings.
+- Copilot endpoint: POST /api/v1/copilot/query.
+- AI calls are not required for the deterministic scan pipeline.
+
+Security and Governance
+-----------------------
+- Authentication endpoints for login, registration, and profile management.
+- Tenant-aware principal context on protected endpoints.
+- Role-based access control for platform administrators and security reviewers.
+- Tenant IDs are checked when importing findings and requesting remediation.
+- Cross-tenant records are rejected or hidden from the requesting principal.
+- Approval decisions require an authorized reviewer or platform administrator.
+- Important mutations emit audit events.
+- Audit history is available through GET /api/v1/audit/events.
+- External integrations are disabled by default in the local configuration.
+- Production identity is designed around Azure AD/OIDC and JWT validation.
+- Production secrets should come from a managed secret store rather than local
+  environment files.
+
+Remediation and Approval
+------------------------
+- Bulk remediation endpoint: POST /api/v1/remediation/bulk.
+- Remediation requests are matched against tenant-scoped findings.
+- Matching findings move to an in-review state.
+- The system returns a workflow ID, matched vulnerability count, branch pattern,
+  confidence, and next-step message.
+- Approval queue endpoint: GET /api/v1/approvals.
+- Approval decision endpoint: POST /api/v1/approvals/{finding_id}/decision.
+- Approval status provides a human governance gate before a remediation is
+  considered authorized.
+- The workflow preserves the connection between finding, remediation request,
+  approval, and audit event.
+
+Dashboard and Metrics
+---------------------
+- Vulnerability inventory with filtering and pagination.
+- Catalog information for mnemonics, applications, and repositories.
+- Dashboard metrics endpoint: GET /api/v1/dashboard/metrics.
+- Metrics include total, critical, high, medium, low, open, remediated,
+  risk-reduction percentage, AI success rate, applications scanned,
+  remediations generated, Jira tickets, pull requests, branches, and security
+  score where applicable.
+- Read-path caching uses a bounded process-local TTL cache in the demo profile.
+- Cache entries are invalidated after relevant mutations.
+
+Performance and Observability
+-----------------------------
+- HTTP requests include request timing and request ID information.
+- Background jobs expose timeline events and aggregate reports.
+- Timeline events include operation name, duration, timestamp, and file path for
+  file-level operations where available.
+- Completed local scans include a performance report in the result.
+- Performance endpoint: GET /api/v1/performance/report.
+- The report identifies stages and the top five bottlenecks.
+- Scan stages can include repository discovery, filtering, hashing, file reads,
+  deterministic analysis, report generation, persistence, and database queries.
+- The expensive scan work is performed by the worker, while the initial HTTP
+  request returns HTTP 202 Accepted after queueing the job.
+
+Expected Performance Behavior
+-----------------------------
+- A warm unchanged scan should usually complete in seconds when cache reuse is
+  effective.
+- A cold fast-demo scan is expected to take approximately 5 to 30 seconds on a
+  developer laptop, depending on disk speed, file size, repository contents, and
+  rule matches.
+- The exact timing is environment-dependent. The performance report is the
+  authoritative source of truth; no fixed sub-60-second guarantee is claimed.
+- Fast demo mode can limit the prioritized scan set to 200 files.
+- The default worker pool is configurable and defaults to 8 workers.
+
+
+End-to-End Demonstration Flow
+-----------------------------
+1. Start the local application using start-app.bat.
+2. Open the Angular UI at http://localhost:4200.
+3. Sign in with a demo user, for example:
+   - analyst@pnc.local / Analyst@123
+   - reviewer@pnc.local / Reviewer@123
+4. Open the scan or discovery workflow.
+5. Submit a deterministic demo scan or import findings.
+6. Receive HTTP 202 Accepted and a job ID.
+7. Poll the job endpoint until the scan is complete.
+8. Review the findings and evidence in the dashboard.
+9. Start the AI Engine workflow to view classification, remediation, validation,
+   test, Git/PR, approval, and knowledge evidence.
+10. Select findings and request bulk remediation.
+11. Sign in as a reviewer and review the approval queue.
+12. Approve or reject the remediation decision.
+13. Review updated statuses, dashboard metrics, and audit events.
+14. Open the performance report to inspect scan stages and bottlenecks.
+
+
+Demo Mode and Production Boundaries
+-----------------------------------
+The dedicated mock scan endpoint is available only in demo mode and queues the
+same background scan pipeline with deterministic mock behavior. The setting
+SCAN_ALWAYS_MOCK_IN_DEMO can force local scan requests to use mock findings when
+demo mode is active. This behavior is an explicit demo guardrail and should not
+be interpreted as a production default.
+
+The credential-free local demo intentionally does not:
+- Read arbitrary local paths outside the supported scan input.
+- Modify repositories automatically.
+- Create Jira tickets.
+- Open or merge pull requests.
+- Call Azure OpenAI without configured credentials.
+- Claim that external production workers are active locally.
+
+Those capabilities are represented by integration and workflow contracts and can
+be enabled only after secret-manager configuration, provider adapters, security
+review, policy approval, and external rollout validation.
+
+
+Technology Stack
+---------------
+Frontend:
+- Angular 22.1.x
+- Angular Material
+- NgRx Store
+- RxJS
+- TypeScript 6
+
+Backend:
+- Python 3.13 or later
+- FastAPI 0.115.x
+- Uvicorn
+- Pydantic 2
+- Pydantic Settings
+- SQLAlchemy 2
+- PostgreSQL driver through psycopg
+
+Data and infrastructure:
+- PostgreSQL 17 and pgvector support in deployment artifacts.
+- In-memory repository for the lightweight local demo.
+- Redis and RabbitMQ configuration points for production-oriented job and cache
+  evolution.
+- Docker Compose and Kubernetes deployment artifacts.
+- GitHub Actions CI quality and security pipeline.
+
+AI and integrations:
+- Deterministic local rules and AI fallback.
+- Optional Ollama provider using the configured local model.
+- Credentialed integration ports for Jira, Git, pull requests, and Azure OpenAI.
+
+
+Important API Areas
+------------------
+Authentication:
+- POST /api/v1/auth/login
+- POST /api/v1/auth/register
+- GET /api/v1/auth/profile
+- PATCH /api/v1/auth/profile
+
+Administration:
+- GET /api/v1/admin/users
+- PATCH /api/v1/admin/users/{user_id}/role
+
+Discovery and findings:
+- GET /api/v1/catalog
+- POST /api/v1/scans/import
+- GET /api/v1/vulnerabilities
+- POST /api/v1/mvp/scans
+- POST /api/v1/mvp/scans/mock
+- POST /api/v1/mvp/scans/git
+- GET /api/v1/mvp/jobs/{job_id}
+
+Operations and governance:
+- GET /api/v1/dashboard/metrics
+- GET /api/v1/performance/report
+- POST /api/v1/remediation/bulk
+- GET /api/v1/approvals
+- POST /api/v1/approvals/{finding_id}/decision
+- GET /api/v1/audit/events
+
+AI Engine:
+- GET /api/v1/engine/agents
+- GET /api/v1/engine/integrations
+- POST /api/v1/engine/workflows
+- GET /api/v1/engine/workflow-jobs/{job_id}
+- GET /api/v1/engine/workflows
+- GET /api/v1/engine/workflows/{workflow_id}
+- POST /api/v1/copilot/query
+
+
+Value Delivered
+---------------
+For security teams:
+- Earlier and more consistent vulnerability discovery.
+- Repeatable deterministic findings for trustworthy demonstrations.
+- Centralized evidence and finding context.
+- Clear remediation ownership and review status.
+
+For engineering teams:
+- Background scans that do not block the user interface.
+- Incremental analysis and scan performance visibility.
+- Remediation planning tied to actual findings.
+- A path toward Git and pull-request automation after integration setup.
+
+For reviewers and governance teams:
+- Human approval before governed remediation.
+- Tenant isolation and role-based permissions.
+- Audit events for important changes.
+- Metrics and evidence that support release and compliance discussions.
+
+For leadership:
+- A single view from risk discovery to release confidence.
+- Lower expected cost of late-stage remediation.
+- Faster, repeatable security demonstrations.
+- A foundation for enterprise integrations and controlled automation.
+
+
+Current Limitations
+-------------------
+- The local job registry and cache are process-local and should be replaced or
+  shared through Redis/PostgreSQL for multi-worker production operation.
+- The deterministic demo scanner is not a replacement for a complete enterprise
+  SAST, SCA, DAST, secrets, IaC, or container security portfolio.
+- External Jira, Git, pull-request, and Azure OpenAI side effects require explicit
+  credentials and integration configuration.
+- Exact scan duration depends on the target repository and execution environment.
+- Production deployment requires full identity, secret management, migration,
+  monitoring, load testing, and rollback validation.
+
+
+Recommended Next Steps
+----------------------
+1. Move background jobs and scan cache to Redis/PostgreSQL.
+2. Persist scan results by repository revision to prevent duplicate findings.
+3. Add broader rule libraries and compliance mappings.
+4. Add SCA, secret, IaC, container, and dependency analysis adapters.
+5. Complete credentialed Jira, Git, and pull-request adapters.
+6. Add production Azure AD/OIDC configuration and managed secrets.
+7. Add cancellation, deadlines, partial-result handling, and retry policies.
+8. Load-test using representative enterprise repositories.
+9. Add executive reporting and compliance dashboards.
+10. Validate progressive delivery, monitoring, and automated rollback gates.
+
+
+One-Sentence Pitch
+------------------
+PNCAI is a governed security and resiliency workspace that turns repeatable
+vulnerability discovery into evidence-backed, tenant-safe, human-approved
+remediation and release confidence.
+
+
+Conclusion
+----------
+PNCAI solves the business problem of fragmented and late security remediation by
+connecting deterministic discovery, AI-assisted understanding, background
+processing, human governance, persistence, performance visibility, and audit
+traceability in one platform. The completed implementation is honest about its
+demo boundaries while providing the contracts and architecture needed to extend
+the solution into a production-grade enterprise security platform.
