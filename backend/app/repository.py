@@ -16,6 +16,10 @@ class VulnerabilityRepository:
     def seed(self, row: Vulnerability) -> None:
         self._rows.append(row)
 
+    def seed_many(self, rows: Iterable[Vulnerability]) -> None:
+        """Persist a scan batch without paying per-finding adapter overhead."""
+        self._rows.extend(rows)
+
     def count(self, tenant_id: UUID) -> int:
         return len(self.list(tenant_id))
 

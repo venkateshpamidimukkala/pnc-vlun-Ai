@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable, tap } from 'rxjs';
+import { Observable, shareReplay, tap } from 'rxjs';
 
 export type Role = 'SECURITY_ANALYST' | 'SECURITY_REVIEWER' | 'PLATFORM_ADMIN';
 export type Permission = 'DASHBOARD_VIEW' | 'SCAN_EXECUTE' | 'VULNERABILITY_VIEW' | 'VULNERABILITY_REMEDIATE' | 'APPROVAL_REVIEW' | 'USER_ADMINISTRATION' | 'PROFILE_MANAGE';
@@ -10,12 +10,13 @@ export interface AuthUser { user_id: string; tenant_id: string; name: string; em
 export class AuthService {
   private readonly http = inject(HttpClient);
   private readonly key = 'pnc.auth';
+  private usersCache?: Observable<AuthUser[]>;
   login(email: string, password: string): Observable<AuthUser> { return this.http.post<AuthUser>('/api/v1/auth/login', { email, password }).pipe(tap(user => this.save(user))); }
   register(name: string, email: string, password: string, role: Role): Observable<AuthUser> { return this.http.post<AuthUser>('/api/v1/auth/register', { name, email, password, role }).pipe(tap(user => this.save(user))); }
   updateProfile(name: string): Observable<AuthUser> { return this.http.patch<AuthUser>('/api/v1/auth/profile', { name }).pipe(tap(user => this.save(user))); }
-  users(): Observable<AuthUser[]> { return this.http.get<AuthUser[]>('/api/v1/admin/users'); }
-  updateUserRole(userId: string, role: Role): Observable<AuthUser> { return this.http.patch<AuthUser>(`/api/v1/admin/users/${userId}/role`, { role }); }
-  user(): AuthUser | null { const value = localStorage.getItem(this.key); return value ? JSON.parse(value) as AuthUser : null; }
+  users(): Observable<AuthUser[]> { if (!this.usersCache) { this.usersCache = this.http.get<AuthUser[]>('/api/v1/admin/users').pipe(shareReplay({bufferSize: 1, refCount: false})); window.setTimeout(() => this.usersCache = undefined, 60_000); } return this.usersCache; }
+  updateUserRole(userId: string, role: Role): Observable<AuthUser> { return this.http.patch<AuthUser>(`/api/v1/admin/users/${userId}/role`, { role }).pipe(tap(() => this.usersCache = undefined)); }
+  user(): AuthUser | null { const value = localStorage.getItem(this.key); if (!value) return null; try { return JSON.parse(value) as AuthUser; } catch { localStorage.removeItem(this.key); return null; } }
   isAuthenticated(): boolean { return this.user() !== null; }
   hasRole(roles: Role[]): boolean { const user = this.user(); return !!user && roles.includes(user.role); }
   hasPermission(permission: Permission): boolean { const user = this.user(); return !!user && (user.permissions?.includes(permission) ?? this.permissionsForRole(user.role).includes(permission)); }

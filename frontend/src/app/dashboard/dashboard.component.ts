@@ -1,10 +1,11 @@
-import { Component, OnInit, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
 import { Router } from '@angular/router';
 import { ApiService, DashboardMetrics, EngineWorkflow } from '../core/api.service';
 import { catchError, forkJoin, of, timeout } from 'rxjs';
 
 @Component({
   standalone: true,
+  changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="page dashboard-page">
       <header class="dashboard-header">

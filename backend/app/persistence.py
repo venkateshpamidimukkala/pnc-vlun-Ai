@@ -3,11 +3,16 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from uuid import UUID
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.settings import settings
-from app.performance import timed
+from app.performance import current_timeline, timed
+import logging
+from time import perf_counter
+
+logger = logging.getLogger("pnc.database")
+SLOW_QUERY_MS = 100.0
 
 
 _engine = create_engine(
@@ -19,6 +24,25 @@ _engine = create_engine(
 )
 SessionFactory = sessionmaker(bind=_engine, autoflush=False, expire_on_commit=False)
 engine = _engine
+
+
+@event.listens_for(_engine, "before_cursor_execute")
+def _before_cursor_execute(conn, cursor, statement, parameters, context, executemany) -> None:
+    conn.info.setdefault("pnc_query_started", []).append(perf_counter())
+
+
+@event.listens_for(_engine, "after_cursor_execute")
+def _after_cursor_execute(conn, cursor, statement, parameters, context, executemany) -> None:
+    started = conn.info.get("pnc_query_started", []).pop() if conn.info.get("pnc_query_started") else None
+    if started is None:
+        return
+    duration_ms = (perf_counter() - started) * 1000
+    detail = " ".join(statement.split())[:240]
+    timeline = current_timeline()
+    if timeline:
+        timeline.mark("database.query", duration_ms, detail=detail)
+    if duration_ms >= SLOW_QUERY_MS:
+        logger.warning("[SLOW-QUERY] %.2f ms: %s", duration_ms, detail)
 
 
 @contextmanager

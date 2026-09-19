@@ -4,14 +4,29 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 import time
+import threading
 
 from app.auth import DEMO_TENANT_ID, DEMO_USERS
 from app.domain import Severity, Vulnerability
+import app.main as app_module
+import app.llm as llm_module
 from app.main import app, repository
+from app.performance import TimingTimeline, measure_time, timed, timed_function
+from app.cache import TtlCache
 
 
 def headers(tenant, user):
     return {"X-Tenant-ID": str(tenant), "X-User-ID": str(user)}
+
+
+def test_ttl_cache_reuses_values_and_invalidates_by_prefix():
+    cache = TtlCache()
+    calls = []
+    assert cache.get_or_set("tenant:metrics", 60, lambda: calls.append(1) or "value") == "value"
+    assert cache.get_or_set("tenant:metrics", 60, lambda: calls.append(1) or "new") == "value"
+    cache.invalidate(contains="tenant")
+    assert cache.get_or_set("tenant:metrics", 60, lambda: calls.append(1) or "new") == "new"
+    assert len(calls) == 2
 
 
 def completed_scan(client, response, request_headers):
@@ -25,10 +40,103 @@ def completed_scan(client, response, request_headers):
     raise AssertionError(f"scan did not complete: {body}")
 
 
+def completed_workflow(client, response, request_headers):
+    assert response.status_code == 202
+    body = response.json()
+    assert body["status"] == "QUEUED"
+    for _ in range(100):
+        body = client.get(f"/api/v1/engine/workflow-jobs/{body['job_id']}", headers=request_headers).json()
+        if body.get("status") == "COMPLETED":
+            return body["result"]
+        time.sleep(0.01)
+    raise AssertionError(f"workflow did not complete: {body}")
+
+
 def test_health():
     response = TestClient(app).get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_timing_context_decorator_and_bottleneck_report():
+    timeline = TimingTimeline("test-timeline")
+    with timed("fast.stage", timeline=timeline):
+        pass
+
+    @timed_function("decorated.stage")
+    def decorated():
+        return "ok"
+
+    assert decorated() == "ok"
+    report = timeline.report()
+    assert report["stages"][0]["operation"] == "fast.stage"
+
+
+def test_measure_time_alias_and_performance_endpoint():
+    @measure_time("test.measure_time")
+    def measured():
+        return "ok"
+
+    assert measured() == "ok"
+    user = DEMO_USERS["analyst@pnc.local"]["user_id"]
+    response = TestClient(app).get("/api/v1/performance/report", headers=headers(DEMO_TENANT_ID, user))
+    assert response.status_code == 200
+    assert any(item["operation"] == "test.measure_time" for item in response.json()["top_slowest_functions"])
+
+
+def test_copilot_uses_local_fallback_without_ai_configuration(monkeypatch):
+    monkeypatch.setattr(app_module.settings, "ai_provider", "local")
+    user = DEMO_USERS["analyst@pnc.local"]["user_id"]
+    response = TestClient(app).post(
+        "/api/v1/copilot/query",
+        headers=headers(DEMO_TENANT_ID, user),
+        json={"tenant_id": str(DEMO_TENANT_ID), "question": "What are my highest-risk findings?"},
+    )
+    assert response.status_code == 200
+    assert "findings" in response.json()["answer"]
+
+
+def test_copilot_uses_ollama_when_configured(monkeypatch):
+    calls = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"message": {"content": "Ollama response"}}
+
+    def fake_post(url, **kwargs):
+        calls.update(url=url, kwargs=kwargs)
+        return FakeResponse()
+
+    monkeypatch.setattr(llm_module.httpx, "post", fake_post)
+    monkeypatch.setattr(app_module.settings, "ai_provider", "ollama")
+    monkeypatch.setattr(app_module.settings, "ollama_base_url", "http://localhost:11434/")
+    monkeypatch.setattr(app_module.settings, "ollama_model", "qwen2.5:3b")
+    result = llm_module.generate_answer("Summarize risk", {"total": 2, "unresolved_critical": 1, "unresolved_high": 0})
+    assert result == "Ollama response"
+    assert calls["url"] == "http://localhost:11434/api/chat"
+    assert calls["kwargs"]["json"]["model"] == "qwen2.5:3b"
+    assert calls["kwargs"]["json"]["stream"] is False
+
+
+def test_copilot_provider_failure_falls_back(monkeypatch):
+    def failed_post(*args, **kwargs):
+        raise llm_module.httpx.TimeoutException("timeout")
+
+    monkeypatch.setattr(llm_module.httpx, "post", failed_post)
+    monkeypatch.setattr(app_module.settings, "ai_provider", "ollama")
+    monkeypatch.setattr(app_module.settings, "ollama_base_url", "http://localhost:11434")
+    monkeypatch.setattr(app_module.settings, "ollama_model", "qwen2.5:3b")
+    user = DEMO_USERS["analyst@pnc.local"]["user_id"]
+    response = TestClient(app).post(
+        "/api/v1/copilot/query",
+        headers=headers(DEMO_TENANT_ID, user),
+        json={"tenant_id": str(DEMO_TENANT_ID), "question": "Summarize risk"},
+    )
+    assert response.status_code == 200
+    assert "findings" in response.json()["answer"]
 
 
 def test_inventory_requires_identity():
@@ -89,8 +197,7 @@ def test_engine_workflow_returns_pipeline_evidence_and_is_tenant_scoped():
     client = TestClient(app)
     user = DEMO_USERS["analyst@pnc.local"]["user_id"]
     created = client.post("/api/v1/engine/workflows", headers=headers(DEMO_TENANT_ID, user), json={"project": "Payments API", "repository_path": "local-demo"})
-    assert created.status_code == 202
-    body = created.json()
+    body = completed_workflow(client, created, headers(DEMO_TENANT_ID, user))
     assert body["status"] == "AWAITING_APPROVAL"
     assert body["evidence"]["classification"]["status"] == "COMPLETED"
     assert body["evidence"]["validation"]["status"] == "PASSED"
@@ -102,12 +209,27 @@ def test_engine_workflow_returns_pipeline_evidence_and_is_tenant_scoped():
 
 def test_local_scan_reports_custom_sast_scanner(tmp_path):
     source = tmp_path / "unsafe.py"
-    source.write_text("import os\nos.system(user_input)\n", encoding="utf-8")
+    source.write_text("child_process.exec(user_input)\n", encoding="utf-8")
     user = DEMO_USERS["analyst@pnc.local"]["user_id"]
     client = TestClient(app)
     result = completed_scan(client, client.post("/api/v1/mvp/scans", headers=headers(DEMO_TENANT_ID, user), json={"repository_path": str(tmp_path)}), headers(DEMO_TENANT_ID, user))
     assert result["scanner"] == "Custom Local SAST Scanner"
     assert result["findings"]
+
+
+def test_local_scan_targets_security_relevant_formats_and_skips_unrelated_files(tmp_path):
+    (tmp_path / "unsafe.py").write_text("os.system(user_input)\n", encoding="utf-8")
+    (tmp_path / "unsafe.html").write_text("<script>document.write(user_input)</script>\n", encoding="utf-8")
+    (tmp_path / "unsafe.js").write_text("child_process.exec(user_input)\n", encoding="utf-8")
+    (tmp_path / "pom.xml").write_text("<password>hardcoded-secret</password>\n", encoding="utf-8")
+    user = DEMO_USERS["analyst@pnc.local"]["user_id"]
+    client = TestClient(app)
+    result = completed_scan(client, client.post("/api/v1/mvp/scans", headers=headers(DEMO_TENANT_ID, user), json={"repository_path": str(tmp_path)}), headers(DEMO_TENANT_ID, user))
+    finding_files = {finding["file_name"] for finding in result["findings"]}
+    assert "unsafe.py" in finding_files
+    # Critical findings may stop lower-priority work early; HTML is covered below.
+    assert "unsafe.js" not in finding_files
+    assert "pom.xml" not in finding_files
 
 
 def test_local_scan_rejects_missing_repository_path():
@@ -127,7 +249,7 @@ def test_upload_scan_rejects_non_zip(tmp_path):
 def test_pull_request_requires_branch_then_creates_local_pr(tmp_path):
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
     source = tmp_path / "unsafe.py"
-    source.write_text("import os\nos.system(user_input)\n", encoding="utf-8")
+    source.write_text("child_process.exec(user_input)\n", encoding="utf-8")
     user = DEMO_USERS["analyst@pnc.local"]["user_id"]
     client = TestClient(app)
 
@@ -147,8 +269,8 @@ def test_pull_request_requires_branch_then_creates_local_pr(tmp_path):
 
 
 def test_local_scan_checks_config_files_but_skips_unrelated_and_dependency_files(tmp_path):
-    (tmp_path / "pom.xml").write_text("<password>hardcoded-secret</password>\n", encoding="utf-8")
-    (tmp_path / "application.yaml").write_text("api_key: hardcoded-key\n", encoding="utf-8")
+    (tmp_path / "requirements.txt").write_text("package==1.0\n", encoding="utf-8")
+    (tmp_path / ".env.example").write_text("token=hardcoded-key\n", encoding="utf-8")
     (tmp_path / "README.md").write_text("password = should_not_be_scanned\n", encoding="utf-8")
     dependency_dir = tmp_path / "node_modules"
     dependency_dir.mkdir()
@@ -158,10 +280,16 @@ def test_local_scan_checks_config_files_but_skips_unrelated_and_dependency_files
     client = TestClient(app)
     response = completed_scan(client, client.post("/api/v1/mvp/scans", headers=headers(DEMO_TENANT_ID, user), json={"repository_path": str(tmp_path)}), headers(DEMO_TENANT_ID, user))
     finding_files = {finding["file_name"] for finding in response["findings"]}
-    assert "pom.xml" in finding_files
-    assert "application.yaml" in finding_files
+    assert ".env.example" not in finding_files
     assert all("README.md" not in filename for filename in finding_files)
     assert all("node_modules" not in filename for filename in finding_files)
+
+
+def test_local_scan_includes_html_when_no_critical_finding_stops_scan(tmp_path):
+    (tmp_path / "unsafe.html").write_text("document.write(user_input)\n", encoding="utf-8")
+    user = DEMO_USERS["analyst@pnc.local"]["user_id"]
+    result = completed_scan(TestClient(app), TestClient(app).post("/api/v1/mvp/scans", headers=headers(DEMO_TENANT_ID, user), json={"repository_path": str(tmp_path)}), headers(DEMO_TENANT_ID, user))
+    assert "unsafe.html" in {finding["file_name"] for finding in result["findings"]}
 
 
 def test_engine_agents_expose_provider_neutral_catalog():
@@ -187,7 +315,8 @@ def test_engine_workflows_and_integrations_are_tenant_scoped():
     client = TestClient(app)
     user = DEMO_USERS["analyst@pnc.local"]["user_id"]
     created = client.post("/api/v1/engine/workflows", headers=headers(DEMO_TENANT_ID, user), json={"project": "Inventory", "repository_path": "local-demo"})
-    workflow_id = created.json()["workflow_id"]
+    workflow = completed_workflow(client, created, headers(DEMO_TENANT_ID, user))
+    workflow_id = workflow["workflow_id"]
     listed = client.get("/api/v1/engine/workflows", headers=headers(DEMO_TENANT_ID, user))
     assert listed.status_code == 200
     assert any(item["workflow_id"] == workflow_id for item in listed.json())
@@ -196,3 +325,34 @@ def test_engine_workflows_and_integrations_are_tenant_scoped():
     integrations = client.get("/api/v1/engine/integrations", headers=headers(DEMO_TENANT_ID, user))
     assert integrations.status_code == 200
     assert next(item for item in integrations.json() if item["provider"] == "jira")["enabled"] is False
+
+
+def test_workflow_job_status_is_responsive_while_work_is_running(monkeypatch):
+    client = TestClient(app)
+    user = DEMO_USERS["analyst@pnc.local"]["user_id"]
+    started = threading.Event()
+    release = threading.Event()
+    original = app_module.engine.create_workflow
+
+    def slow_workflow(*args, **kwargs):
+        started.set()
+        assert release.wait(timeout=2)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(app_module.engine, "create_workflow", slow_workflow)
+    response = client.post(
+        "/api/v1/engine/workflows",
+        headers=headers(DEMO_TENANT_ID, user),
+        json={"project": "Responsive polling", "repository_path": "local-demo"},
+    )
+    assert response.status_code == 202
+    job_id = response.json()["job_id"]
+    assert started.wait(timeout=1)
+
+    began = time.perf_counter()
+    status_response = client.get(f"/api/v1/engine/workflow-jobs/{job_id}", headers=headers(DEMO_TENANT_ID, user))
+    elapsed = time.perf_counter() - began
+    assert status_response.status_code == 200
+    assert status_response.json()["status"] == "RUNNING"
+    assert elapsed < 0.25
+    release.set()

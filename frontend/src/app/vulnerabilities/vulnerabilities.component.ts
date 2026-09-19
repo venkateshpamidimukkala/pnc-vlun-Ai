@@ -1,4 +1,4 @@
-import { Component, OnInit, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ApiService, Vulnerability } from '../core/api.service';
 
@@ -12,6 +12,7 @@ import { ApiService, Vulnerability } from '../core/api.service';
       </section></div>
   `,
   styles: [`.muted{display:block;margin-top:.25rem;color:var(--muted);font-size:.73rem}.result-count{margin:1rem 0 0;color:var(--muted);font-size:.75rem}`],
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class VulnerabilitiesComponent implements OnInit {
   private readonly api = inject(ApiService);
@@ -25,7 +26,7 @@ export class VulnerabilitiesComponent implements OnInit {
 
   ngOnInit(): void { this.load(); }
   load(): void { this.loading = true; this.error = false; this.api.vulnerabilities().subscribe({ next: (rows) => { this.allRows = rows; this.filterRows(); this.loading = false; }, error: () => { this.error = true; this.loading = false; } }); }
-  filterRows(): void { const query = this.search.toLowerCase(); this.rows = this.allRows.filter((row) => (!query || [row.title, row.cve, row.category, row.mnemonic, row.application, row.repository].some((value) => (value || '').toLowerCase().includes(query))) && (!this.severity || row.severity === this.severity) && (!this.status || row.status === this.status)); }
+  filterRows(): void { const query = this.search.toLowerCase(); this.rows = this.allRows.filter((row) => (!query || [row.title, row.cve, row.category, row.mnemonic, row.application, row.repository].some((value) => (value || '').toLowerCase().includes(query))) && (!this.severity || row.severity === this.severity) && (!this.status || row.status === this.status)).slice(0, 250); }
   reset(): void { this.search = ''; this.severity = ''; this.status = ''; this.filterRows(); }
   formatStatus(value: string): string { return value.replaceAll('_', ' '); }
   exportRows(): void { const body = this.rows.map((row) => `${row.severity},"${row.title.replaceAll('"', '""')}",${row.mnemonic},${row.status}`).join('\n'); const blob = new Blob([`severity,title,mnemonic,status\n${body}`], { type: 'text/csv' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = 'pnc-vulnerability-inventory.csv'; link.click(); URL.revokeObjectURL(link.href); }

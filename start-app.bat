@@ -46,7 +46,10 @@ if errorlevel 1 (
     exit /b 1
 )
 
-start "PNCAI Backend" cmd /k "cd /d "%BACKEND%" && set APP_ENV=local&& set DEMO_DATA_ENABLED=true&& set ENABLE_EXTERNAL_INTEGRATIONS=false&& python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+rem Reload is opt-in: WatchFiles can repeatedly restart the backend when scan artifacts/logs change.
+set "BACKEND_RELOAD="
+if /I "%PNCAI_RELOAD%"=="true" set "BACKEND_RELOAD=--reload"
+start "PNCAI Backend" cmd /k "cd /d "%BACKEND%" && set APP_ENV=local&& set DEMO_DATA_ENABLED=true&& set ENABLE_EXTERNAL_INTEGRATIONS=false&& python -m uvicorn app.main:app %BACKEND_RELOAD% --host 0.0.0.0 --port 8000"
 start "PNCAI Frontend" cmd /k "cd /d "%FRONTEND%" && npm start"
 
 echo PNCAI application started.

@@ -26,7 +26,9 @@ from app.settings import settings
 from app.workflow import RemediationWorkflow
 from app.mvp import LocalSecurityMvp
 from app import jobs
-from app.performance import TimingTimeline, timed
+from app.performance import TimingTimeline, activate_timeline, current_timeline, performance_report, reset_timeline, timed
+from app.cache import read_cache
+from app.llm import generate_answer_async
 
 logger = logging.getLogger("pnc.api")
 
@@ -124,15 +126,20 @@ register_exception_handlers(app)
 async def request_timing(request: Request, call_next):
     timeline = TimingTimeline()
     started = perf_counter()
-    response = await call_next(request)
-    duration = (perf_counter() - started) * 1000
-    response.headers["X-Process-Time-Ms"] = f"{duration:.2f}"
-    response.headers["X-Request-ID"] = timeline.correlation_id
-    if duration >= 1000:
-        logger.warning("[%s] SLOW HTTP %s %s completed (%.2f ms)", timeline.correlation_id, request.method, request.url.path, duration)
-    else:
-        logger.info("[%s] HTTP %s %s completed (%.2f ms)", timeline.correlation_id, request.method, request.url.path, duration)
-    return response
+    started_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    token = activate_timeline(timeline)
+    try:
+        with timed("http.request", detail=f"{request.method} {request.url.path}"):
+            response = await call_next(request)
+        duration = (perf_counter() - started) * 1000
+        ended_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+        response_size = response.headers.get("content-length", "unknown")
+        response.headers["X-Process-Time-Ms"] = f"{duration:.2f}"
+        response.headers["X-Request-ID"] = timeline.correlation_id
+        logger.log(logging.WARNING if duration >= 1000 else logging.INFO, "[PERF] %s %s %s status=%s start=%s end=%s duration=%.2f ms response_size=%s", timeline.correlation_id, request.method, request.url.path, response.status_code, started_at, ended_at, duration, response_size)
+        return response
+    finally:
+        reset_timeline(token)
 
 
 @app.post("/api/v1/auth/login", response_model=AuthResponse, tags=["authentication"])
@@ -171,7 +178,7 @@ def update_profile(payload: ProfileUpdateRequest, principal: Principal = Depends
 @app.get("/api/v1/admin/users", response_model=list[AuthResponse], tags=["administration"])
 def list_users(principal: Principal = Depends(require_principal)) -> list[AuthResponse]:
     require_role(principal, "PLATFORM_ADMIN")
-    return [user_response(email, user) for email, user in DEMO_USERS.items()]
+    return read_cache.get_or_set(f"users:{principal.tenant_id}", settings.read_cache_ttl_seconds, lambda: [user_response(email, user) for email, user in DEMO_USERS.items()])
 
 
 @app.patch("/api/v1/admin/users/{user_id}/role", response_model=AuthResponse, tags=["administration"])
@@ -182,6 +189,7 @@ def update_user_role(user_id: UUID, payload: RoleUpdateRequest, principal: Princ
     for email, user in DEMO_USERS.items():
         if user["user_id"] == user_id:
             user["role"] = payload.role
+            read_cache.invalidate(f"users:{principal.tenant_id}")
             return user_response(email, user)
     raise HTTPException(status_code=404, detail="User not found")
 
@@ -212,6 +220,7 @@ def import_scan(payload: ScanImportRequest, principal: Principal = Depends(requi
         if finding.tenant_id != principal.tenant_id:
             raise HTTPException(status_code=403, detail="Finding tenant does not match authenticated context")
         repository.seed(finding)
+    read_cache.invalidate(contains=str(principal.tenant_id))
     scan_id = uuid4()
     audit_repository.append(AuditEvent(event_type="SCAN_IMPORTED", aggregate_id=scan_id, actor_id=principal.subject, tenant_id=principal.tenant_id))
     return {"scan_id": str(scan_id), "scanner": payload.scanner, "imported": len(payload.findings), "status": "COMPLETED"}
@@ -219,6 +228,11 @@ def import_scan(payload: ScanImportRequest, principal: Principal = Depends(requi
 
 @app.get("/api/v1/vulnerabilities", response_model=list[Vulnerability], tags=["vulnerabilities"])
 def list_vulnerabilities(severity: Annotated[Severity | None, Query()] = None, finding_status: Annotated[FindingStatus | None, Query(alias="status")] = None, limit: Annotated[int, Query(ge=1, le=500)] = 100, offset: Annotated[int, Query(ge=0)] = 0, principal: Principal = Depends(require_principal)) -> list[Vulnerability]:
+    key = f"vulnerabilities:{principal.tenant_id}:{severity}:{finding_status}:{limit}:{offset}"
+    return read_cache.get_or_set(key, settings.read_cache_ttl_seconds, lambda: _list_vulnerabilities(principal, severity, finding_status, limit, offset))
+
+
+def _list_vulnerabilities(principal: Principal, severity: Severity | None, finding_status: FindingStatus | None, limit: int, offset: int) -> list[Vulnerability]:
     rows = tenant_rows(principal)
     if severity:
         rows = [row for row in rows if row.severity == severity]
@@ -233,19 +247,20 @@ def mvp_scan(payload: LocalScanRequest, principal: Principal = Depends(require_p
     root = Path(repository_path).expanduser()
     if not root.exists() or not root.is_dir():
         raise HTTPException(status_code=400, detail="Repository path must be an existing directory visible to the API server")
-    job_id = jobs.submit("LOCAL_SCAN", principal.tenant_id, _scan_directory, root, principal)
+    read_cache.invalidate(contains=str(principal.tenant_id))
+    job_id = jobs.submit("LOCAL_SCAN", principal.tenant_id, _scan_directory, root, principal, with_progress=True)
     return {"scan_id": str(job_id), "job_id": str(job_id), "scanner": "Custom Local SAST Scanner", "status": "QUEUED"}
 
 
-def _scan_directory(root: Path, principal: Principal) -> dict:
+def _scan_directory(root: Path, principal: Principal, progress=None) -> dict:
     try:
         with timed("scan.directory_job"):
-            application, findings = mvp.scan(principal.tenant_id, str(root), repository)
+            application, findings = mvp.scan(principal.tenant_id, str(root), repository, progress=progress)
     except (OSError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     scan_id = uuid4()
     audit_repository.append(AuditEvent(event_type="REPOSITORY_SCAN", aggregate_id=scan_id, actor_id=principal.subject, tenant_id=principal.tenant_id))
-    return {"scan_id": str(scan_id), "application": application, "findings": findings, "scanner": "Custom Local SAST Scanner", "status": "COMPLETED"}
+    return {"scan_id": str(scan_id), "application": application, "findings": findings, "scanner": "Custom Local SAST Scanner", "performance": current_timeline().report() if current_timeline() else {}, "status": "COMPLETED"}
 
 
 @app.get("/api/v1/mvp/jobs/{job_id}", tags=["mvp"])
@@ -254,6 +269,12 @@ def mvp_job(job_id: UUID, principal: Principal = Depends(require_principal)) -> 
     if job is None:
         raise HTTPException(status_code=404, detail="Background job not found")
     return job
+
+
+@app.get("/jobs/{job_id}", tags=["mvp"])
+def scan_job(job_id: UUID, principal: Principal = Depends(require_principal)) -> dict:
+    """Short polling alias for repository scan progress."""
+    return mvp_job(job_id, principal)
 
 
 @app.post("/api/v1/mvp/scans/git", status_code=status.HTTP_202_ACCEPTED, tags=["mvp"])
@@ -289,10 +310,12 @@ def _upload_scan_job(archive_bytes: bytes, principal: Principal) -> dict:
     workspace = Path(tempfile.mkdtemp(prefix="pnc-scan-"))
     try:
         archive = workspace / "repository.zip"
-        archive.write_bytes(archive_bytes)
+        with timed("repository.upload_write", detail=f"{len(archive_bytes)} bytes"):
+            archive.write_bytes(archive_bytes)
         extract_root = workspace / "repository"
         extract_root.mkdir()
-        with ZipFile(archive) as zipped:
+        with timed("repository.extraction"):
+          with ZipFile(archive) as zipped:
             members = zipped.infolist()
             if len(members) > 5000 or sum(item.file_size for item in members) > 100 * 1024 * 1024:
                 raise ValueError("ZIP archive exceeds the 5,000-file or 100 MB scan limit")
@@ -370,6 +393,10 @@ def mvp_applications(principal: Principal = Depends(require_principal)) -> list[
 @app.get("/api/v1/mvp/application-inventory", tags=["mvp"])
 def mvp_application_inventory(principal: Principal = Depends(require_principal)) -> list[dict]:
     """Return tenant applications grouped by mnemonic and repository."""
+    return read_cache.get_or_set(f"inventory:{principal.tenant_id}", settings.read_cache_ttl_seconds, lambda: _build_application_inventory(principal))
+
+
+def _build_application_inventory(principal: Principal) -> list[dict]:
     groups: dict[str, dict] = {}
     rows = tenant_rows(principal)
     application_records = mvp.records("application", principal.tenant_id)
@@ -437,6 +464,16 @@ def mvp_knowledge(principal: Principal = Depends(require_principal)) -> list[dic
 
 @app.get("/api/v1/dashboard/metrics", response_model=DashboardMetrics, tags=["dashboard"])
 def dashboard_metrics(principal: Principal = Depends(require_principal)) -> DashboardMetrics:
+    return read_cache.get_or_set(f"metrics:{principal.tenant_id}", settings.read_cache_ttl_seconds, lambda: _dashboard_metrics(principal))
+
+
+@app.get("/api/v1/performance/report", tags=["operations"])
+def performance_metrics(_: Principal = Depends(require_principal)) -> dict[str, object]:
+    """Expose process-local timing aggregates for the hackathon operations view."""
+    return performance_report()
+
+
+def _dashboard_metrics(principal: Principal) -> DashboardMetrics:
     rows = tenant_rows(principal)
     total = len(rows)
     remediated = sum(row.status == FindingStatus.REMEDIATED for row in rows)
@@ -480,12 +517,17 @@ def decide_approval(finding_id: UUID, payload: ApprovalDecision, principal: Prin
 
 
 @app.post("/api/v1/copilot/query", response_model=CopilotResponse, tags=["copilot"])
-def copilot_query(payload: CopilotRequest, principal: Principal = Depends(require_principal)) -> CopilotResponse:
+async def copilot_query(payload: CopilotRequest, principal: Principal = Depends(require_principal)) -> CopilotResponse:
     if payload.tenant_id != principal.tenant_id:
         raise HTTPException(status_code=403, detail="Tenant mismatch")
     rows = tenant_rows(principal)
     critical = sum(row.severity == Severity.CRITICAL and row.status != FindingStatus.REMEDIATED for row in rows)
-    return CopilotResponse(answer=f"Your tenant has {len(rows)} findings, including {critical} unresolved critical finding(s). The live demo knowledge base includes inventory, remediation workflow, approval, and audit evidence.", evidence=["vulnerability inventory", "remediation workflow state", "audit event store"], confidence=Confidence.HIGH)
+    high = sum(row.severity == Severity.HIGH and row.status != FindingStatus.REMEDIATED for row in rows)
+    context = {"total": len(rows), "unresolved_critical": critical, "unresolved_high": high}
+    answer = await generate_answer_async(payload.question, context)
+    if answer is None:
+        answer = f"Your tenant has {len(rows)} findings, including {critical} unresolved critical finding(s). The live demo knowledge base includes inventory, remediation workflow, approval, and audit evidence."
+    return CopilotResponse(answer=answer, evidence=["vulnerability inventory", "remediation workflow state", "audit event store"], confidence=Confidence.HIGH)
 
 
 @app.get("/api/v1/audit/events", response_model=list[AuditEvent], tags=["audit"])
@@ -508,24 +550,62 @@ def list_engine_integrations(_: Principal = Depends(require_principal)) -> list[
 
 @app.post("/api/v1/engine/workflows", status_code=status.HTTP_202_ACCEPTED, tags=["ai-engine"])
 def create_engine_workflow(payload: EngineWorkflowRequest, principal: Principal = Depends(require_principal)) -> dict:
-    with timed("workflow.load_findings"):
-        rows = tenant_rows(principal)
+    rows = tenant_rows(principal)
     if payload.finding_ids:
         tenant_finding_ids = {row.id for row in rows}
         missing_ids = [finding_id for finding_id in payload.finding_ids if finding_id not in tenant_finding_ids]
         if missing_ids:
             raise HTTPException(status_code=404, detail="One or more findings were not found in the current tenant")
     selected = [row for row in rows if not payload.finding_ids or row.id in payload.finding_ids]
-    with timed("workflow.classify_remediate_validate", detail=f"{len(selected)} findings"):
-        workflow_state = engine.create_workflow(principal.tenant_id, principal.subject, payload.project, payload.repository_path, selected)
+
+    job_id = jobs.submit(
+        "ENGINE_WORKFLOW",
+        principal.tenant_id,
+        _create_engine_workflow_job,
+        principal,
+        payload.project,
+        payload.repository_path,
+        selected,
+    )
+    return {"job_id": str(job_id), "status": "QUEUED"}
+
+
+def _create_engine_workflow_job(
+    principal: Principal,
+    project: str,
+    repository_path: str,
+    selected: list[Vulnerability],
+) -> dict:
+    with timed("workflow.load_findings"):
+        findings = list(selected)
+    with timed("workflow.classify_remediate_validate", detail=f"{len(findings)} findings"):
+        workflow_state = engine.create_workflow(principal.tenant_id, principal.subject, project, repository_path, findings)
     with timed("workflow.persist_audit"):
         audit_repository.append(AuditEvent(event_type="ENGINE_WORKFLOW_CREATED", aggregate_id=workflow_state.workflow_id, actor_id=principal.subject, tenant_id=principal.tenant_id))
+    read_cache.invalidate(prefix=f"workflows:{principal.tenant_id}:")
     return workflow_payload(workflow_state)
 
 
+@app.get("/api/v1/engine/workflow-jobs/{job_id}", tags=["ai-engine"])
+def engine_workflow_job(job_id: UUID, principal: Principal = Depends(require_principal)) -> dict:
+    job = jobs.get(job_id, principal.tenant_id)
+    if job is None or job.get("kind") != "ENGINE_WORKFLOW":
+        raise HTTPException(status_code=404, detail="Workflow job not found")
+    return job
+
+
 @app.get("/api/v1/engine/workflows", tags=["ai-engine"])
-def list_engine_workflows(principal: Principal = Depends(require_principal)) -> list[dict]:
-    return [workflow_payload(item) for item in engine.list(principal.tenant_id)]
+def list_engine_workflows(
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    principal: Principal = Depends(require_principal),
+) -> list[dict]:
+    key = f"workflows:{principal.tenant_id}:{limit}:{offset}"
+    return read_cache.get_or_set(
+        key,
+        settings.read_cache_ttl_seconds,
+        lambda: [workflow_payload(item) for item in engine.list(principal.tenant_id)[offset:offset + limit]],
+    )
 
 
 @app.get("/api/v1/engine/workflows/{workflow_id}", tags=["ai-engine"])

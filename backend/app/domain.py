@@ -54,6 +54,8 @@ class Vulnerability(BaseModel):
     business_impact: str | None = None
     technical_impact: str | None = None
     risk_score: float | None = Field(default=None, ge=0, le=10)
+    vulnerable_code: str | None = None
+    recommended_fix: str | None = None
 
 
 class BulkRemediationRequest(BaseModel):
